@@ -1,0 +1,299 @@
+/* Tìm công cụ đi kèm, giải mã & trộn Âm thanh tổng toàn timeline thành WAV 16kHz mono, đo độ to từng từ. (Node) */
+'use strict';
+const fs = require('fs');
+const path = require('path');
+const { spawn, spawnSync } = require('child_process');
+
+const IS_WIN = process.platform === 'win32';
+
+function onPath(name) {
+  const r = spawnSync(IS_WIN ? 'where' : 'which', [name], { encoding: 'utf8' });
+  if (r.status !== 0 || !r.stdout) return null;
+  const first = r.stdout.split(/\r?\n/).find(Boolean);
+  return first && fs.existsSync(first) ? first : null;
+}
+
+/** Ưu tiên file đi kèm trong <plugin>/bin, sau đó mới tìm trên PATH. */
+function findTool(extRoot, baseNames) {
+  for (const b of baseNames) {
+    const f = path.join(extRoot, 'bin', IS_WIN ? b + '.exe' : b);
+    if (fs.existsSync(f)) return f;
+  }
+  for (const b of baseNames) {
+    const f = onPath(IS_WIN ? b + '.exe' : b);
+    if (f) return f;
+  }
+  return null;
+}
+
+/** Thứ tự tìm: <plugin>/bin (bản dev) -> %APPDATA%\AutoSubTypo (bộ tự tải) -> PATH. */
+function findTools(extRoot) {
+  const st = require('./setup.js').status();
+  const local = (names) => {
+    for (const b of names) {
+      const f = path.join(extRoot, 'bin', IS_WIN ? b + '.exe' : b);
+      if (fs.existsSync(f)) return f;
+    }
+    return null;
+  };
+  const fromPath = (names) => { for (const b of names) { const f = onPath(IS_WIN ? b + '.exe' : b); if (f) return f; } return null; };
+  const W = ['whisper-cli'], F = ['ffmpeg'];
+  return {
+    ffmpeg: local(F) || st.ffmpeg || fromPath(F),
+    whisper: local(W) || st.whisper || fromPath(W)
+  };
+}
+
+/** Model: ưu tiên turbo (nhanh), rồi large-v3…; tìm trong <plugin>/models rồi %APPDATA%\AutoSubTypo\models. */
+function findModel(extRoot) {
+  const dirs = [path.join(extRoot, 'models'), path.join(require('./setup.js').toolsDir(), 'models')];
+  const order = [/turbo/i, /large-v3/i, /large/i, /medium/i, /small/i, /./];
+  for (const dir of dirs) {
+    if (!fs.existsSync(dir)) continue;
+    const bins = fs.readdirSync(dir).filter((f) => /^ggml-.*\.bin$/i.test(f));
+    for (const re of order) {
+      const hit = bins.find((f) => re.test(f));
+      if (hit) return path.join(dir, hit);
+    }
+  }
+  return null;
+}
+
+function run(cmd, args, { onStderr } = {}) {
+  return new Promise((resolve, reject) => {
+    const p = spawn(cmd, args, { windowsHide: true });
+    let err = '';
+    p.stderr.on('data', (d) => { const s = d.toString(); err += s; if (err.length > 20000) err = err.slice(-20000); if (onStderr) onStderr(s); });
+    p.stdout.on('data', () => {});
+    p.on('error', reject);
+    p.on('close', (code) => code === 0 ? resolve(err) : reject(new Error(path.basename(cmd) + ' lỗi (' + code + '): ' + err.slice(-600))));
+  });
+}
+
+/** Cắt đoạn [inSec, inSec+durSec] của file nguồn thành WAV 16kHz mono PCM16. */
+function extractWav(ffmpeg, src, inSec, durSec, outWav) {
+  const args = ['-y', '-v', 'error', '-ss', String(Math.max(0, inSec))];
+  if (durSec > 0) args.push('-t', String(durSec));
+  args.push('-i', src, '-vn', '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le', outWav);
+  return run(ffmpeg, args);
+}
+
+/** Giải mã toàn bộ 1 file nguồn thành WAV 16kHz mono PCM16 (dùng 1 lần cho nhiều đoạn cắt). */
+function decodeFullWav(ffmpeg, src, outWav) {
+  const args = ['-y', '-v', 'error', '-i', src, '-vn', '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le', outWav];
+  return run(ffmpeg, args);
+}
+
+/** Đọc WAV PCM16 -> { sampleRate, samples: Int16Array } (mono). */
+function readWav(file) {
+  const buf = fs.readFileSync(file);
+  if (buf.toString('ascii', 0, 4) !== 'RIFF' || buf.toString('ascii', 8, 12) !== 'WAVE') throw new Error('Không phải WAV: ' + file);
+  let off = 12, sampleRate = 16000, channels = 1, bits = 16, data = null;
+  while (off + 8 <= buf.length) {
+    const id = buf.toString('ascii', off, off + 4);
+    const size = buf.readUInt32LE(off + 4);
+    const body = off + 8;
+    if (id === 'fmt ') {
+      channels = buf.readUInt16LE(body + 2);
+      sampleRate = buf.readUInt32LE(body + 4);
+      bits = buf.readUInt16LE(body + 14);
+    } else if (id === 'data') {
+      data = buf.subarray(body, Math.min(buf.length, body + size));
+      break;
+    }
+    off = body + size + (size % 2);
+  }
+  if (!data) throw new Error('WAV không có dữ liệu');
+  if (bits !== 16 || channels !== 1) throw new Error('Cần WAV mono 16-bit');
+  const n = Math.floor(data.length / 2);
+  const samples = new Int16Array(n);
+  for (let i = 0; i < n; i++) samples[i] = data.readInt16LE(i * 2);
+  return { sampleRate, samples };
+}
+
+/** Ghi Int16Array thành file WAV PCM16 mono chuẩn RIFF. */
+function writeWav(filePath, int16Samples, sampleRate = 16000) {
+  const dataLen = int16Samples.length * 2;
+  const buf = Buffer.allocUnsafe(44 + dataLen);
+  buf.write('RIFF', 0, 4, 'ascii');
+  buf.writeUInt32LE(36 + dataLen, 4);
+  buf.write('WAVE', 8, 4, 'ascii');
+  buf.write('fmt ', 12, 4, 'ascii');
+  buf.writeUInt32LE(16, 16);             // PCM chunk size
+  buf.writeUInt16LE(1, 20);              // Audio format = 1 (PCM)
+  buf.writeUInt16LE(1, 22);              // Channels = 1 (mono)
+  buf.writeUInt32LE(sampleRate, 24);     // Sample rate
+  buf.writeUInt32LE(sampleRate * 2, 28); // Byte rate
+  buf.writeUInt16LE(2, 32);              // Block align
+  buf.writeUInt16LE(16, 34);             // Bits per sample
+  buf.write('data', 36, 4, 'ascii');
+  buf.writeUInt32LE(dataLen, 40);
+  const srcBytes = Buffer.from(int16Samples.buffer, int16Samples.byteOffset, dataLen);
+  srcBytes.copy(buf, 44);
+  fs.writeFileSync(filePath, buf);
+  return filePath;
+}
+
+/** Khử trùng lặp segment khi nhân đôi clip tách nền (PiP) trên nhiều track khác nhau. */
+function deduplicateAudioSegments(segments) {
+  const sorted = (segments || []).slice().sort((a, b) => (a.start - b.start) || ((a.trackIndex || 0) - (b.trackIndex || 0)));
+  const kept = [];
+  for (const s of sorted) {
+    if (!s || !s.path) continue;
+    const normPath = path.resolve(s.path).toLowerCase();
+    const isDup = kept.some((prev) =>
+      prev._normPath === normPath &&
+      Math.abs(prev.start - s.start) < 0.025 &&
+      Math.abs((prev.sourceStart || 0) - (s.sourceStart || 0)) < 0.025
+    );
+    if (!isDup) {
+      kept.push(Object.assign({ _normPath: normPath }, s));
+    }
+  }
+  return kept;
+}
+
+/**
+ * Tổng hợp Âm thanh tổng (Master Timeline Audio Mixdown):
+ * - Giải mã mỗi file nguồn duy nhất 1 lần sang 16kHz mono PCM.
+ * - Trộn tất cả các segment được chọn vào 1 mảng Float32Array theo đúng timestamp timeline.
+ * - Xuất ra 1 file master_16k.wav duy nhất cho Whisper + Preview.
+ */
+async function buildMasterWav(ffmpeg, segments, projectDurationSec, outWav, onProgress) {
+  const SR = 16000;
+  const FADE = 80; // 5ms micro-fade tại mỗi điểm cắt
+  const dedupedAll = deduplicateAudioSegments(segments);
+  const missingFiles = [];
+  const validSegs = [];
+
+  for (const s of dedupedAll) {
+    if (fs.existsSync(s.path)) validSegs.push(s);
+    else if (!missingFiles.includes(s.path)) missingFiles.push(s.path);
+  }
+  if (!validSegs.length) {
+    throw new Error(missingFiles.length ? `Không tìm thấy file âm thanh: ${missingFiles[0]}` : 'Không có đoạn âm thanh hợp lệ nào được chọn.');
+  }
+
+  const maxSegEnd = Math.max(1, ...validSegs.map((s) => s.start + s.duration));
+  const durSec = Math.max(projectDurationSec || 0, maxSegEnd);
+  const totalSamples = Math.max(SR, Math.ceil(durSec * SR));
+
+  const uniquePaths = [];
+  const pathToKey = new Map();
+  for (const s of validSegs) {
+    const key = path.resolve(s.path).toLowerCase();
+    if (!pathToKey.has(key)) {
+      pathToKey.set(key, uniquePaths.length);
+      uniquePaths.push(s.path);
+    }
+  }
+
+  const tmpDir = path.dirname(outWav);
+  const decodedCache = new Map();
+  const tempFiles = [];
+
+  try {
+    for (let u = 0; u < uniquePaths.length; u++) {
+      const srcPath = uniquePaths[u];
+      const key = path.resolve(srcPath).toLowerCase();
+      if (onProgress) onProgress(u / (uniquePaths.length + 1), `Giải mã nguồn ${u + 1}/${uniquePaths.length}: ${path.basename(srcPath)}…`);
+      const tmpWav = path.join(tmpDir, `_src_${u}.wav`);
+      tempFiles.push(tmpWav);
+      await decodeFullWav(ffmpeg, srcPath, tmpWav);
+      decodedCache.set(key, readWav(tmpWav).samples);
+    }
+
+    if (onProgress) onProgress(uniquePaths.length / (uniquePaths.length + 1), `Đang trộn ${validSegs.length} đoạn vào Âm thanh tổng…`);
+
+    const mix = new Float32Array(totalSamples);
+    for (const seg of validSegs) {
+      const key = path.resolve(seg.path).toLowerCase();
+      const srcSamples = decodedCache.get(key);
+      if (!srcSamples || !srcSamples.length) continue;
+
+      const dstStart = Math.max(0, Math.floor(seg.start * SR));
+      const rawLen = Math.floor(seg.duration * SR);
+      const segLen = Math.min(rawLen, totalSamples - dstStart);
+      if (segLen <= 0) continue;
+
+      const gain = Math.min(1.8, Math.max(0.25, typeof seg.volume === 'number' ? seg.volume : 1.0));
+      const spd = seg.speed && seg.speed > 0 ? seg.speed : 1.0;
+      const srcBaseSec = seg.sourceStart || 0;
+      const fadeLen = Math.min(FADE, Math.floor(segLen / 4));
+
+      for (let i = 0; i < segLen; i++) {
+        const srcIdx = Math.floor((srcBaseSec + (i / SR) * spd) * SR);
+        if (srcIdx < 0 || srcIdx >= srcSamples.length) continue;
+        let env = 1.0;
+        if (fadeLen > 0) {
+          if (i < fadeLen) env = i / fadeLen;
+          else if (i >= segLen - fadeLen) env = (segLen - 1 - i) / fadeLen;
+        }
+        mix[dstStart + i] += (srcSamples[srcIdx] / 32768) * gain * env;
+      }
+    }
+
+    // Chuẩn hoá biên độ an toàn (tránh clipping hoặc quá nhỏ)
+    let maxAbs = 0;
+    for (let i = 0; i < mix.length; i++) {
+      const a = Math.abs(mix[i]);
+      if (a > maxAbs) maxAbs = a;
+    }
+    let normScale = 1.0;
+    if (maxAbs > 0.98) normScale = 0.95 / maxAbs;
+    else if (maxAbs > 0.005 && maxAbs < 0.25) normScale = Math.min(3.5, 0.7 / maxAbs);
+
+    const outInt16 = new Int16Array(totalSamples);
+    for (let i = 0; i < totalSamples; i++) {
+      const v = Math.max(-1, Math.min(1, mix[i] * normScale));
+      outInt16[i] = v < 0 ? Math.round(v * 32768) : Math.round(v * 32767);
+    }
+
+    writeWav(outWav, outInt16, SR);
+
+    return {
+      wavPath: outWav,
+      wavData: { sampleRate: SR, samples: outInt16 },
+      stats: {
+        totalSegments: (segments || []).length,
+        mixedSegments: validSegs.length,
+        duplicateRemoved: (segments || []).length - dedupedAll.length,
+        uniqueFiles: uniquePaths.length,
+        missingFiles,
+        durationSec: totalSamples / SR
+      }
+    };
+  } finally {
+    for (const tf of tempFiles) {
+      try { if (fs.existsSync(tf)) fs.unlinkSync(tf); } catch (e) {}
+    }
+  }
+}
+
+/** Gắn độ to (dBFS RMS) cho từng từ. Thời gian của từ tính theo đầu file WAV. */
+function addLoudness(words, wav) {
+  const { sampleRate, samples } = wav;
+  for (const w of words) {
+    const a = Math.max(0, Math.floor(w.start * sampleRate));
+    const b = Math.min(samples.length, Math.ceil(w.end * sampleRate));
+    if (b <= a) { w.rms = -90; continue; }
+    let sum = 0;
+    for (let i = a; i < b; i++) { const v = samples[i] / 32768; sum += v * v; }
+    w.rms = 10 * Math.log10(sum / (b - a) + 1e-9);
+  }
+  return words;
+}
+
+module.exports = {
+  findTools,
+  findTool,
+  findModel,
+  extractWav,
+  decodeFullWav,
+  readWav,
+  writeWav,
+  deduplicateAudioSegments,
+  buildMasterWav,
+  addLoudness,
+  run
+};

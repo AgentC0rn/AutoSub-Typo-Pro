@@ -1,0 +1,25 @@
+{
+    "id":  "50FA7F2F-B81B-4f00-9284-D6D6187569A6",
+    "type":  "sticker_animation",
+    "animations":  [
+                       {
+                           "id":  "7095603601355051521",
+                           "type":  "in",
+                           "start":  0,
+                           "duration":  500000,
+                           "path":  "C:/Users/CR Studio/AppData/Local/CapCut/User Data/Cache/effect/7095603601355051521/f83eb09e4eebd66587abf023688739a5",
+                           "platform":  "all",
+                           "resource_id":  "7095603601355051521",
+                           "third_resource_id":  "7095603601355051521",
+                           "source_platform":  1,
+                           "name":  "Hiện sang phải",
+                           "category_id":  "ruchang",
+                           "category_name":  "text",
+                           "panel":  "",
+                           "material_type":  "sticker",
+                           "anim_adjust_params":  null,
+                           "request_id":  "20261111073043000000000000085B472"
+                       }
+                   ],
+    "multi_language_current":  "none"
+}

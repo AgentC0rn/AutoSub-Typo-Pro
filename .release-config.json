@@ -1,0 +1,9 @@
+{
+  "repo": "AgentC0rn/AutoSub-Typo-Pro",
+  "versionFile": "resources/app/package.json",
+  "releaseScript": "scripts/release.ps1",
+  "defaultCommand": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release.ps1",
+  "fullInstallerCommand": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release.ps1 -FullInstaller",
+  "installerScript": "installer.iss",
+  "notes": "Mac dinh dong goi file cap nhat nhanh AutoSub-Typo-Pro-Update-vX.Y.Z.zip (~1.5 MB). Chi them -FullInstaller khi thay doi Electron runtime hoac resources/tools/."
+}

@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' file: data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; media-src file: blob:" />
+  <title>AutoSub Typo Pro for CapCut</title>
+  <link rel="stylesheet" href="app.css" />
+</head>
+<body>
+  <!-- Nền vũ trụ + tinh vân + sóng đáy -->
+  <div class="cosmos-bg" aria-hidden="true">
+    <div class="stars"></div>
+    <div class="nebula nebula-cyan"></div>
+    <div class="nebula nebula-pink"></div>
+    <div class="bottom-wave"></div>
+  </div>
+
+  <header class="top">
+    <div class="brand-wrap">
+      <span class="brand-dot" aria-hidden="true"></span>
+      <div class="brand">
+        AutoSub <span class="accent-cyan">Typo</span> <span class="badge-pro">PRO</span>
+        <span class="for">for CapCut</span>
+        <span id="version" class="muted small"></span>
+      </div>
+    </div>
+
+    <div class="top-actions">
+      <span id="engine-pill" class="pill pill-cyan">Đang kiểm tra GPU…</span>
+      <button id="btn-check-update" class="pill pill-ghost" type="button" title="Kiểm tra phiên bản mới từ GitHub Releases">🔄 Cập nhật</button>
+      <button id="btn-pick-root" class="pill pill-pink" title="Chọn thư mục chứa CapCut Drafts khác">📁 Thư mục Drafts</button>
+      <button id="btn-reset-layout" class="pill pill-ghost" type="button" title="Khôi phục kích thước các khung về mặc định">⤢ Bố cục gốc</button>
+    </div>
+  </header>
+
+  <main class="cols">
+    <!-- ================= Cột trái: quy trình 5 bước ================= -->
+    <div class="left">
+      <!-- Hai thẻ chỉ số tròn phát sáng kiểu Cosmic -->
+      <section class="hero-metrics">
+        <div class="metric-card">
+          <div class="metric-ring ring-cyan">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M9 18V5l12-2v13"></path>
+              <circle cx="6" cy="18" r="3"></circle>
+              <circle cx="18" cy="16" r="3"></circle>
+            </svg>
+          </div>
+          <div class="metric-info">
+            <div class="metric-label">MASTER AUDIO MIX</div>
+            <div id="metric-audio-value" class="metric-value">Chưa chọn project</div>
+            <div id="metric-audio-sub" class="metric-sub">Quét toàn bộ track Voice · Lọc BGM &amp; SFX</div>
+          </div>
+        </div>
+
+        <div class="metric-card">
+          <div class="metric-ring ring-pink">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+            </svg>
+          </div>
+          <div class="metric-info">
+            <div class="metric-label">TYPOGRAPHY ENGINE</div>
+            <div id="metric-typo-value" class="metric-value">Sẵn sàng</div>
+            <div id="metric-typo-sub" class="metric-sub">Nhận dạng 1 mạch toàn timeline</div>
+          </div>
+        </div>
+      </section>
+
+      <section id="setup-card" class="card" hidden>
+        <h2><span class="num">0</span> Cài công cụ nhận dạng giọng nói</h2>
+        <div class="muted small">Lưu tại <code>%APPDATA%\AutoSubTypo</code>. Tự động dùng CUDA nếu có GPU NVIDIA.</div>
+        <ul id="setup-status" class="setup-list"></ul>
+        <div class="row">
+          <label>Model</label>
+          <select id="setup-model">
+            <option value="fast">Nhanh — large-v3-turbo (547 MB)</option>
+            <option value="best">Chính xác nhất — large-v3 (3 GB)</option>
+          </select>
+        </div>
+        <button id="btn-setup" class="primary">Tải &amp; cài công cụ</button>
+      </section>
+
+      <section class="card">
+        <div class="card-head">
+          <h2><span class="num">1</span> Chọn project CapCut</h2>
+          <span id="drafts-root-info" class="root-chip" title="Thư mục CapCut Drafts đang quét"></span>
+        </div>
+        <div class="muted small">Tự động nhận cả project có nested Timelines (CapCut 9.x). Khi xuất luôn tạo <b>bản sao an toàn</b>.</div>
+        <div class="drafts-head">
+          <input id="draft-filter" type="text" placeholder="Tìm project…" />
+          <button id="btn-drafts" class="ghost" title="Tải lại danh sách project">⟳ Tải lại</button>
+        </div>
+        <div id="drafts" class="drafts"></div>
+        <div class="box-resizer" data-box="drafts" title="Kéo để thay đổi chiều cao danh sách project · Đúp chuột để đặt lại"></div>
+        <div id="timeline-box" class="timeline-box" hidden>
+          <div class="sub-h">Timeline trong project <span id="timeline-count" class="tl-total"></span>
+            <span class="muted small">(bấm để chuyển · mỗi timeline nhận dạng riêng, kết quả được giữ lại khi chuyển qua lại)</span>
+          </div>
+          <div id="timelines" class="timelines"></div>
+        </div>
+      </section>
+
+      <section class="card card-turbo">
+        <div class="card-head">
+          <h2><span class="num">2</span> Âm thanh tổng &amp; Nhận dạng</h2>
+          <div class="track-actions">
+            <button id="btn-tracks-voice" class="ghost mini" type="button" disabled>Chỉ Voice</button>
+            <button id="btn-tracks-all" class="ghost mini" type="button" disabled>Tất cả có tiếng</button>
+          </div>
+        </div>
+        <div id="audio-summary" class="audio-summary muted small">Chọn 1 project ở bước 1 để quét toàn bộ track âm thanh.</div>
+        <div id="audio-tracks" class="audio-tracks"></div>
+        <div class="box-resizer" data-box="audio-tracks" title="Kéo để thay đổi chiều cao danh sách track · Đúp chuột để đặt lại"></div>
+
+        <div class="row" style="margin-top: 10px;">
+          <label>Ngôn ngữ</label>
+          <select id="lang">
+            <option value="vi">Tiếng Việt</option>
+            <option value="en">English</option>
+            <option value="auto">Tự nhận</option>
+          </select>
+        </div>
+        <button id="btn-listen" class="primary" disabled>Nghe &amp; nhận dạng Âm thanh tổng</button>
+        <div class="progress"><div id="progress-bar"></div></div>
+        <div id="progress-label" class="muted small"></div>
+        <div class="sub-h">Bản chép lời <span class="muted small">(bấm vào từ để sửa, gõ dấu cách để tách thành nhiều từ, Enter để lưu, đúp chuột để nhảy tới)</span></div>
+        <div id="words" class="words"></div>
+        <div class="box-resizer" data-box="words" title="Kéo để thay đổi chiều cao Bản chép lời · Đúp chuột để đặt lại"></div>
+      </section>
+
+      <section class="card">
+        <div class="card-head">
+          <h2><span class="num">3</span> Typography</h2>
+          <div class="track-actions">
+            <button id="btn-split-playhead" class="ghost mini" type="button" title="Tách cụm chữ tại vị trí đầu phát (Ctrl+B)" disabled>✂ Tách tại đầu phát</button>
+            <button id="btn-layout" class="ghost mini" disabled>Dàn lại typography</button>
+          </div>
+        </div>
+        <div class="sub-h">Các cụm chữ
+          <span class="muted small">(bấm cụm = sửa riêng · bấm từ = bật/tắt nhấn · Shift+bấm = nối từ · bấm nhãn = đổi kiểu · ✂ giữa 2 từ hoặc Alt+bấm từ = tách cụm · ⤓ Gộp = nối với cụm sau · Ctrl+B = tách tại đầu phát)</span>
+        </div>
+        <div id="groups" class="groups"></div>
+        <div class="box-resizer" data-box="groups" title="Kéo để thay đổi chiều cao danh sách cụm chữ · Đúp chuột để đặt lại"></div>
+      </section>
+
+      <section id="inspector" class="card insp">
+        <h2><span class="num">4</span> Thuộc tính <span id="insp-target" class="insp-target"></span></h2>
+        <div id="insp-hint" class="muted small"></div>
+        <div class="insp-actions">
+          <button id="insp-replay" class="ghost" hidden>▶ Xem lại cụm</button>
+          <button id="insp-clear" class="ghost" hidden>Bỏ tuỳ chỉnh cụm này</button>
+          <button id="insp-deselect" class="ghost" hidden>← Mặc định chung</button>
+        </div>
+
+        <div class="sub-h">Animation xuất hiện</div>
+        <div id="insp-anim" class="anim-grid"></div>
+
+        <div class="sub-h">Cỡ &amp; vị trí</div>
+        <div class="row">
+          <label>Cỡ chữ</label><input id="insp-scale" type="range" min="50" max="200" step="5" /><span id="insp-scale-v" class="val"></span>
+        </div>
+        <div class="row">
+          <label>Vị trí dọc</label><input id="insp-ypos" type="range" min="30" max="90" step="1" /><span id="insp-ypos-v" class="val"></span>
+        </div>
+
+        <div class="sub-h">Bộ phối Font &amp; Màu nhanh <span class="muted small">— bấm 1 chạm để áp dụng</span></div>
+        <div id="preset-grid" class="preset-grid"></div>
+
+        <div class="sub-h">Font &amp; màu <span class="muted small">— bấm ô chữ để đổi font · bấm ô màu bên phải để đổi màu</span></div>
+        <div id="styles" class="styles"></div>
+        <button id="btn-styles-reset" class="ghost small-btn">Về font &amp; màu gốc của app</button>
+      </section>
+
+      <section class="card">
+        <h2><span class="num">5</span> Ghi vào CapCut</h2>
+        <label class="check"><input id="opt-glow" type="checkbox" checked /> Phát sáng nhẹ cho từ nhấn</label>
+        <label class="check"><input id="opt-sub" type="checkbox" /> Thêm phụ đề thường ở đáy khung</label>
+        <label id="opt-all-tl-wrap" class="check" hidden><input id="opt-all-tl" type="checkbox" checked /> <span id="opt-all-tl-label">Ghi cả các timeline đã nhận dạng</span></label>
+        <button id="btn-write" class="primary pill-cta" disabled>Ghi vào CapCut</button>
+        <div id="write-result" class="result" hidden></div>
+      </section>
+    </div>
+
+    <div id="split-cols" class="splitter-v" title="Kéo để thay đổi độ rộng 2 cột Trái / Phải · Đúp chuột để đặt lại"></div>
+
+    <!-- ================= Cột phải: xem thử toàn timeline ================= -->
+    <div class="right">
+      <div class="stage-card">
+        <div class="stage-bar">
+          <span class="stage-title">XEM THỬ TOÀN TIMELINE</span>
+          <span id="audio-mode-pill" class="mode-pill">Chưa nạp</span>
+        </div>
+        <div class="stage-wrap">
+          <div id="stage" class="stage">
+            <video id="video" preload="auto"></video>
+            <img id="stage-photo" alt="" hidden />
+            <audio id="master-audio" preload="auto"></audio>
+            <div id="stage-empty" class="stage-empty">Chọn 1 project CapCut để xem thử</div>
+            <div id="stage-text" class="stage-text"></div>
+          </div>
+          <div class="player">
+            <button id="btn-play" class="play-btn" disabled>▶</button>
+            <input id="scrub" type="range" min="0" max="1000" value="0" disabled />
+            <span id="time" class="time-txt">0.0s</span>
+            <span id="dur-total" class="muted small">/ 0.0s</span>
+            <div class="vol-wrap" title="Âm lượng xem thử">
+              <span class="vol-ic">🔊</span>
+              <input id="player-vol" type="range" min="0" max="100" value="100" />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="split-right" class="splitter-h" title="Kéo để thay đổi chiều cao khung Xem thử &amp; Nhật ký · Đúp chuột để đặt lại"></div>
+
+      <div class="log-card">
+        <div class="log-head">NHẬT KÝ XỬ LÝ</div>
+        <div id="log" class="log"></div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Bảng chọn font -->
+  <div id="font-modal" class="modal" hidden>
+    <div class="modal-box">
+      <div class="modal-head">
+        <div><b>Chọn font</b> cho <span id="fm-style"></span></div>
+        <button id="fm-close" class="ghost">✕</button>
+      </div>
+      <div class="fm-tools">
+        <input id="fm-search" type="text" placeholder="Tìm font… (vd: Montserrat, Bold)" />
+        <input id="fm-sample" type="text" value="Thời gian là vàng — Typography" title="Câu mẫu" />
+      </div>
+      <div class="fm-tools">
+        <label class="check"><input id="fm-vi" type="checkbox" checked /> Chỉ font có đủ dấu tiếng Việt</label>
+        <span id="fm-count" class="muted small"></span>
+        <button id="fm-rescan" class="ghost" title="Đọc lại font trên máy (sau khi cài font mới)">⟳ Đọc lại font</button>
+      </div>
+      <div id="fm-list" class="fm-list"></div>
+    </div>
+  </div>
+
+  <!-- Thông báo cập nhật -->
+  <div id="update-modal" class="modal" hidden>
+    <div class="modal-box update-box">
+      <div class="modal-head">
+        <div><b>Cập nhật AutoSub Typo Pro</b></div>
+        <button id="upd-close" class="ghost" type="button">✕</button>
+      </div>
+      <div id="upd-ver" class="upd-ver"></div>
+      <div id="upd-notes" class="upd-notes"></div>
+      <div id="upd-prog-wrap" class="upd-prog-wrap" hidden>
+        <div class="upd-prog-track"><div id="upd-prog-bar" class="upd-prog-bar"></div></div>
+        <div id="upd-prog-txt" class="muted small">Đang chuẩn bị tải…</div>
+      </div>
+      <div class="upd-actions">
+        <button id="upd-open-web" class="ghost" type="button">Xem trên GitHub</button>
+        <div class="upd-actions-right">
+          <button id="upd-later" class="ghost" type="button">Để sau</button>
+          <button id="upd-start" class="primary" type="button">Cập nhật &amp; khởi động lại</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="shared/core/layout.js"></script>
+  <script src="shared/core/srt.js"></script>
+  <script src="renderer.js"></script>
+</body>
+</html>

@@ -1,0 +1,297 @@
+'use strict';
+const assert = require('assert');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
+const appDir = path.join(__dirname, 'resources', 'app');
+const toolsDir = path.join(__dirname, 'resources', 'tools');
+const cc = require(path.join(appDir, 'shared', 'core', 'capcut.js'));
+const audio = require(path.join(appDir, 'shared', 'core', 'audio.js'));
+const whisper = require(path.join(appDir, 'shared', 'core', 'whisper.js'));
+const typo = require(path.join(appDir, 'shared', 'core', 'capcut-typo.js'));
+const ttf = require(path.join(appDir, 'shared', 'core', 'ttf.js'));
+const setup = require(path.join(appDir, 'shared', 'core', 'setup.js'));
+const Layout = require(path.join(appDir, 'shared', 'core', 'layout.js'));
+
+async function main() {
+  console.log('=== 1. Checking Draft Discovery ===');
+  const roots = cc.draftsRoots();
+  console.log('Roots:', roots);
+  assert(roots.some((r) => /CapCut Drafts/i.test(r)), 'Expected D:\\Capcut\\CapCut Drafts from .capcutrc');
+
+  const drafts = cc.listDrafts();
+  console.log('Total drafts found:', drafts.length);
+  const opal2 = drafts.find((d) => d.name === 'Opal 2');
+  const phamHa = drafts.find((d) => d.name === 'Phạm Hà');
+  assert(opal2, 'Opal 2 draft must be found');
+  assert(phamHa, 'Phạm Hà draft must be found');
+  console.log('Found Opal 2:', opal2.dir);
+  console.log('Found Phạm Hà:', phamHa.dir);
+
+  console.log('\n=== 2. Testing Method A + B on "Opal 2" ===');
+  const aOpal = cc.analyzeTimelineAudio(opal2.dir);
+  aOpal.tracks.forEach((t) => console.log(`  Track #${t.trackIndex} [${t.type}] "${t.name}": role=${t.role}, selected=${t.selected}, audible=${t.audibleCount}/${t.totalSegs}, avgVol=${t.avgVolume.toFixed(2)}`));
+  const opalVoice = aOpal.tracks.filter((t) => t.selected);
+  const opalBgm = aOpal.tracks.filter((t) => t.role === 'bgm');
+  const opalSilent = aOpal.tracks.filter((t) => t.role === 'silent' || t.role === 'muted');
+  assert.strictEqual(opalSilent.length, 2, 'Opal 2 tracks #0 and #2 should be silent');
+  assert.strictEqual(opalBgm.length, 1, 'Opal 2 track #8 should be classified as BGM');
+  assert.strictEqual(opalBgm[0].selected, false, 'BGM track must be unchecked by default');
+  assert.strictEqual(opalVoice.length, 1, 'Opal 2 should auto-select 1 voice track (#7)');
+  assert(/ElevenLabs_Opal2_voice\.mp3/i.test(opalVoice[0].segments[0].path), 'Selected voice must be ElevenLabs_Opal2_voice.mp3');
+
+  console.log('\n=== 3. Testing Method A + B on "Phạm Hà" ===');
+  const aHa = cc.analyzeTimelineAudio(phamHa.dir);
+  aHa.tracks.forEach((t) => console.log(`  Track #${t.trackIndex} [${t.type}] "${t.name}": role=${t.role}, selected=${t.selected}, audible=${t.audibleCount}/${t.totalSegs}, avgVol=${t.avgVolume.toFixed(2)}`));
+  const haSelectedSegs = aHa.tracks.filter((t) => t.selected).flatMap((t) => t.segments);
+  const haSfx = aHa.tracks.filter((t) => t.role === 'sfx');
+  const haBgm = aHa.tracks.filter((t) => t.role === 'bgm');
+  const haMuted = aHa.tracks.filter((t) => t.role === 'muted');
+  assert(haMuted.length >= 1, 'Phạm Hà muted track (#3) must be detected as muted');
+  assert.strictEqual(haSfx.length, 2, 'Phạm Hà tracks #9 and #10 must be classified as SFX');
+  assert(haSfx.every((t) => !t.selected), 'SFX tracks must be unchecked by default');
+  assert.strictEqual(haBgm.length, 1, 'Phạm Hà track #11 must be classified as BGM');
+  assert.strictEqual(haBgm[0].selected, false, 'BGM track must be unchecked by default');
+  assert(aHa.duplicateCount >= 2, `Expected >=2 PiP duplicates detected on Phạm Hà, got ${aHa.duplicateCount}`);
+
+  console.log('\n=== 4. Testing Master WAV Mixdown (FFmpeg + Float32Array) ===');
+  const ffmpeg = path.join(toolsDir, 'ffmpeg', 'ffmpeg.exe');
+  const whisperCuda = path.join(toolsDir, 'whisper-cuda', 'whisper-cli.exe');
+  const whisperCpu = path.join(toolsDir, 'whisper-cpu', 'whisper-cli.exe');
+  const model = path.join(toolsDir, 'models', 'ggml-large-v3-turbo-q5_0.bin');
+  assert(fs.existsSync(ffmpeg), 'ffmpeg.exe missing');
+  assert(fs.existsSync(whisperCpu), 'whisper-cli.exe (cpu) missing');
+  assert(fs.existsSync(model), 'model missing');
+
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'autosub-test-'));
+  try {
+    const wavHa = path.join(tmp, 'ha_master.wav');
+    const mixHa = await audio.buildMasterWav(ffmpeg, haSelectedSegs, aHa.projectDuration, wavHa);
+    console.log('Phạm Hà Master WAV stats:', mixHa.stats);
+    assert(fs.existsSync(wavHa), 'ha_master.wav must exist');
+    assert(mixHa.stats.duplicateRemoved >= 2, 'PiP duplicates must be removed during mixdown');
+    assert.strictEqual(mixHa.wavData.sampleRate, 16000);
+    const maxHa = mixHa.wavData.samples.reduce((m, v) => Math.max(m, Math.abs(v)), 0);
+    assert(maxHa > 1000, 'Mixed WAV amplitude must be audible');
+
+    const opalSelectedSegs = opalVoice.flatMap((t) => t.segments);
+    const wavOpal = path.join(tmp, 'opal_master.wav');
+    const mixOpal = await audio.buildMasterWav(ffmpeg, opalSelectedSegs, aOpal.projectDuration, wavOpal);
+    console.log('Opal 2 Master WAV stats:', mixOpal.stats);
+    assert(fs.existsSync(wavOpal), 'opal_master.wav must exist');
+
+    console.log('\n=== 5. Testing End-to-End Whisper + Layout + CapCut Typo Segments on "Opal 2" ===');
+    const gpu = setup.hasNvidia();
+    const bin = (gpu && fs.existsSync(whisperCuda)) ? whisperCuda : whisperCpu;
+    console.log('Running whisper with:', bin, gpu ? `(GPU: ${gpu})` : '(CPU)');
+    let words;
+    try {
+      words = await whisper.transcribe({ bin, model, wav: wavOpal, lang: 'en' });
+    } catch (e) {
+      if (bin !== whisperCpu) {
+        console.log('GPU whisper failed, falling back to CPU:', e.message);
+        words = await whisper.transcribe({ bin: whisperCpu, model, wav: wavOpal, lang: 'en' });
+      } else throw e;
+    }
+    audio.addLoudness(words, mixOpal.wavData);
+    console.log('Recognized words:', words.length, 'Sample:', words.slice(0, 8).map((w) => w.text).join(' '));
+    assert(words.length > 20, `Expected >20 words from Opal 2 voiceover, got ${words.length}`);
+
+    const groups = Layout.buildLayout(words, { lang: 'en' });
+    const segs = typo.buildSegments(groups, {
+      width: aOpal.canvas.width,
+      height: aOpal.canvas.height,
+      fps: aOpal.canvas.fps,
+      fontsDir: path.join(appDir, 'shared', 'fonts'),
+      anim: 'auto',
+      glow: true
+    });
+    console.log('Generated phrase groups:', groups.length, 'CapCut text segments:', segs.length);
+    assert(groups.length > 3, 'Expected >3 typography groups');
+    assert(segs.length >= words.length * 0.9, 'Expected CapCut word segments for recognized words');
+
+    console.log('\n=== 6. Verifying New Animations, Vietnamese Presets, Bundled Fonts & UI ===');
+    const fontsDir = path.join(appDir, 'shared', 'fonts');
+    const newAnims = ['elastic', 'float', 'wave', 'pulse'];
+    for (const animId of newAnims) {
+      const animEntry = Array.isArray(typo.ANIMS)
+        ? typo.ANIMS.find((a) => a.id === animId)
+        : typo.ANIMS[animId];
+      assert(animEntry, `Missing animation "${animId}" in typo.ANIMS`);
+      const aSegs = typo.buildSegments(groups.slice(0, 2), {
+        width: aOpal.canvas.width,
+        height: aOpal.canvas.height,
+        fps: aOpal.canvas.fps,
+        fontsDir,
+        anim: animId,
+        glow: true
+      });
+      assert(aSegs.length > 0, `Animation "${animId}" returned 0 segments`);
+      const hasKfs = aSegs.some((s) =>
+        s.keyframes &&
+        typeof s.keyframes === 'object' &&
+        Object.values(s.keyframes).some((arr) => Array.isArray(arr) && arr.length > 0)
+      );
+      assert(hasKfs, `Animation "${animId}" must produce non-empty keyframe segments`);
+      console.log(`Anim "${animId}": OK (${aSegs.length} segments)`);
+    }
+
+    const viSample = 'Thời gian là vàng — Thẩm mỹ Đẹp';
+    const expectedPresets = ['luxury', 'cosmic', 'editorial', 'viral', 'classic'];
+    assert(typo.PRESETS, 'typo.PRESETS must exist');
+    const collectFontFiles = (val, out = []) => {
+      if (typeof val === 'string' && /\.(ttf|otf)$/i.test(val.trim())) out.push(val.trim());
+      else if (Array.isArray(val)) val.forEach((v) => collectFontFiles(v, out));
+      else if (val && typeof val === 'object') Object.values(val).forEach((v) => collectFontFiles(v, out));
+      return out;
+    };
+    for (const presetId of expectedPresets) {
+      const preset = Array.isArray(typo.PRESETS)
+        ? typo.PRESETS.find((p) => p.id === presetId)
+        : typo.PRESETS[presetId];
+      assert(preset, `Missing preset "${presetId}" in typo.PRESETS`);
+      const presetFonts = [...new Set(collectFontFiles(preset))];
+      assert(presetFonts.length > 0, `Preset "${presetId}" must reference font files`);
+      for (const fName of presetFonts) {
+        const fPath = path.join(fontsDir, fName);
+        assert(fs.existsSync(fPath), `Preset "${presetId}" font missing: ${fPath}`);
+        if (presetId !== 'classic') {
+          assert(ttf.hasChars(fPath, viSample), `Preset "${presetId}" font failed Vietnamese glyph check: ${fName}`);
+        }
+      }
+      console.log(`Preset "${presetId}": OK (${presetFonts.join(', ')})`);
+    }
+
+    const expectedBundledFonts = [
+      'Montserrat-Bold.ttf',
+      'Montserrat-Black.ttf',
+      'DancingScript-Bold.ttf',
+      'SVN-Bali Script.ttf',
+      'SVN-Blenda Script.ttf',
+      'SVN-Gilroy Bold.otf',
+      'SVN-Gilroy Heavy.otf',
+      'Oswald-Bold.ttf',
+      'Anton-Regular.ttf',
+      'SVN-Abril Fatface.ttf',
+      'Quicksand-Bold.ttf',
+      'Lora-BoldItalic.ttf'
+    ];
+    for (const fName of expectedBundledFonts) {
+      const fPath = path.join(fontsDir, fName);
+      assert(fs.existsSync(fPath), `Bundled font missing: ${fPath}`);
+      assert(ttf.hasChars(fPath, viSample), `Bundled font failed Vietnamese check: ${fName}`);
+    }
+    console.log(`Bundled 12 new fonts verified (${expectedBundledFonts.length}/${expectedBundledFonts.length} Vietnamese OK)`);
+
+    const html = fs.readFileSync(path.join(appDir, 'index.html'), 'utf8');
+    assert(!/logo\.png/i.test(html), 'index.html must not reference logo.png');
+    assert(/id=["']preset-grid["']/.test(html), 'index.html must contain #preset-grid');
+    assert(/id=["']player-vol["']/.test(html), 'index.html must contain #player-vol');
+    console.log('UI checks passed: no logo.png, #preset-grid & #player-vol present');
+
+    console.log('\n=== 7. Tách / Gộp cụm chữ & tách từ sau khi nhận dạng ===');
+    const lo = { lang: 'en' };
+    const g2 = Layout.buildLayout(words, lo);
+    const nBefore = g2.length;
+    const target = g2.findIndex((g) => g.words.length >= 3);
+    assert(target >= 0, 'Need a group with >=3 words to test splitting');
+    const origWords = g2[target].words.map((w) => w.text);
+    const parts = Layout.splitGroup(g2, target, 1, lo);
+    assert(parts && g2.length === nBefore + 1, 'splitGroup must add 1 group');
+    assert.deepStrictEqual(parts[0].words.map((w) => w.text).concat(parts[1].words.map((w) => w.text)), origWords, 'split must preserve words');
+    assert(parts[0].id !== parts[1].id, 'split groups need unique ids');
+    for (let k = 0; k < g2.length - 1; k++) {
+      assert(g2[k].end <= g2[k + 1].start + 1e-6, `groups #${k} and #${k + 1} overlap after split`);
+      assert(g2[k].start < g2[k].end, `group #${k} has invalid time range`);
+    }
+    [parts[0], parts[1]].forEach((p) => {
+      const lw = p.lines.flatMap((l) => l.words.map((w) => w.text));
+      assert.deepStrictEqual(lw, p.words.map((w) => w.text), 'lines must be relayouted after split');
+      if (p.span) assert(p.span[0] >= 0 && p.span[1] < p.words.length, 'span must stay inside group');
+    });
+    const merged = Layout.mergeGroups(g2, target, lo);
+    assert(merged && g2.length === nBefore, 'mergeGroups must restore group count');
+    assert.deepStrictEqual(merged.words.map((w) => w.text), origWords, 'merge must restore words');
+    const tMid = (g2[target].words[1].start + g2[target].words[1].end) / 2;
+    const atRes = Layout.splitAtTime(g2, tMid, lo);
+    assert(atRes && g2.length === nBefore + 1, 'splitAtTime must split the group under the playhead');
+    const segsAfter = typo.buildSegments(g2, {
+      width: aOpal.canvas.width, height: aOpal.canvas.height, fps: aOpal.canvas.fps, fontsDir, anim: 'auto', glow: true
+    });
+    assert(segsAfter.length >= words.length * 0.9, 'segments must still build after split/merge');
+    const ws = Layout.splitWordTiming({ text: 'xinchào', start: 1, end: 2, rms: 0.4 }, 'xin chào bạn');
+    assert.deepStrictEqual(ws.map((w) => w.text), ['xin', 'chào', 'bạn'], 'splitWordTiming texts');
+    assert(Math.abs(ws[0].start - 1) < 1e-9 && Math.abs(ws[2].end - 2) < 1e-9, 'splitWordTiming must keep outer timing');
+    for (let k = 1; k < ws.length; k++) assert(ws[k].start >= ws[k - 1].end - 1e-9, 'splitWordTiming must be ordered');
+    console.log(`Split/merge OK: ${nBefore} → ${nBefore + 1} → ${nBefore} → ${g2.length} cụm, ${segsAfter.length} segments; splitWordTiming OK`);
+
+    console.log('\n=== 8. Nhiều timeline trong 1 project ===');
+    const multi = drafts.filter((d) => d.timelineCount > 1);
+    console.log('Drafts with multiple timelines:', multi.length);
+    assert(multi.length > 0, 'Expected at least one multi-timeline draft');
+    const tlDraft = drafts.find((d) => d.name === '0701') || multi[0];
+    const tls = cc.listTimelines(tlDraft.dir, true);
+    console.log(`"${tlDraft.name}" timelines:`, tls.map((t) => `${t.name}${t.isMain ? '*' : ''} ${t.duration.toFixed(1)}s ${t.trackCount} tracks`).join(' | '));
+    assert(tls.length === tlDraft.timelineCount && tls.length > 1, 'listTimelines count must match timelineCount');
+    assert(tls.filter((t) => t.isMain).length === 1, 'Exactly one main timeline');
+    const secondary = tls.find((t) => !t.isMain);
+    const anMain = cc.analyzeTimelineAudio(tlDraft.dir, tls.find((t) => t.isMain).id);
+    const anSec = cc.analyzeTimelineAudio(tlDraft.dir, secondary.id);
+    assert.strictEqual(anSec.timelineId, secondary.id, 'analysis must report secondary timeline id');
+    assert(/Timelines[\\/]/.test(anSec.contentFile) && anSec.contentFile.includes(secondary.id), 'secondary analysis must read its own draft_content.json');
+    console.log(`Main: ${anMain.projectDuration.toFixed(2)}s, ${anMain.tracks.length} tracks · Secondary "${secondary.name}": ${anSec.projectDuration.toFixed(2)}s, ${anSec.tracks.length} tracks`);
+
+    // Ghi thử vào timeline phụ trên BẢN SAO trong thư mục tạm (không đụng project thật)
+    const tmpDraft = path.join(tmp, 'tl-copy');
+    fs.cpSync(tlDraft.dir, tmpDraft, { recursive: true });
+    const mainFile = path.join(tmpDraft, 'Timelines', tls.find((t) => t.isMain).id, 'draft_content.json');
+    const rootFile = path.join(tmpDraft, 'draft_content.json');
+    const secFile = path.join(tmpDraft, 'Timelines', secondary.id, 'draft_content.json');
+    const mainBefore = fs.readFileSync(mainFile, 'utf8');
+    const rootBefore = fs.existsSync(rootFile) ? fs.readFileSync(rootFile, 'utf8') : null;
+    const textTracksBefore = JSON.parse(fs.readFileSync(secFile, 'utf8')).tracks.filter((t) => t.type === 'text').length;
+    const nWritten = cc.addTextTrack(tmpDraft, segsAfter.slice(0, 12), { name: 'Typo', timelineId: secondary.id });
+    const secAfter = JSON.parse(fs.readFileSync(secFile, 'utf8'));
+    const textTracksAfter = secAfter.tracks.filter((t) => t.type === 'text').length;
+    assert(nWritten === 12, 'addTextTrack must write 12 segments');
+    assert(textTracksAfter > textTracksBefore, 'secondary timeline must receive new text tracks');
+    assert.strictEqual(fs.readFileSync(mainFile, 'utf8'), mainBefore, 'main timeline must stay untouched');
+    if (rootBefore !== null) assert.strictEqual(fs.readFileSync(rootFile, 'utf8'), rootBefore, 'root draft_content must stay untouched');
+    console.log(`Wrote ${nWritten} segments into secondary timeline copy (${textTracksBefore} → ${textTracksAfter} text tracks), main/root untouched`);
+
+    const html2 = fs.readFileSync(path.join(appDir, 'index.html'), 'utf8');
+    ['timeline-box', 'timelines', 'btn-split-playhead', 'opt-all-tl', 'split-cols', 'split-right', 'btn-reset-layout'].forEach((id) => assert(html2.includes(`id="${id}"`), `index.html must contain #${id}`));
+    ['drafts', 'audio-tracks', 'words', 'groups'].forEach((b) => assert(html2.includes(`data-box="${b}"`), `index.html must contain data-box="${b}"`));
+    const rendJs = fs.readFileSync(path.join(appDir, 'renderer.js'), 'utf8');
+    assert(rendJs.includes('initResizableLayout'), 'renderer.js must define and call initResizableLayout');
+    assert(rendJs.includes('Bytedance\\\\CapCut') || rendJs.includes('Bytedance\\CapCut'), 'renderer.js must probe CapCut registry installDir');
+    const cssBuf = fs.readFileSync(path.join(appDir, 'app.css'));
+    assert(cssBuf.indexOf(Buffer.from([0xef, 0xbb, 0xbf]), 3) < 0, 'app.css must not contain a mid-file BOM');
+
+    // Packaging, branding & Windows portability checks
+    const icoBuf = fs.readFileSync(path.join(appDir, 'shared', 'assets', 'app.ico'));
+    const logoBuf = fs.readFileSync(path.join(appDir, 'shared', 'assets', 'logo.png'));
+    assert(icoBuf.length > 1024 && icoBuf.readUInt16LE(2) === 1, 'app.ico must be a valid Windows ICO file');
+    assert(logoBuf.length > 1024 && logoBuf.slice(1, 4).toString('ascii') === 'PNG', 'logo.png must be a valid PNG file');
+    const pkgJson = JSON.parse(fs.readFileSync(path.join(appDir, 'package.json'), 'utf8'));
+    assert.strictEqual(pkgJson.author, 'AutoSub Typo Pro', 'package.json author must be updated');
+    const mainJs = fs.readFileSync(path.join(appDir, 'main.js'), 'utf8');
+    assert(mainJs.includes('setAppUserModelId') && mainJs.includes('requestSingleInstanceLock'), 'main.js must configure AppUserModelId and single instance lock');
+    const capcutJs = fs.readFileSync(path.join(appDir, 'shared', 'core', 'capcut.js'), 'utf8');
+    assert(capcutJs.includes('readCapcutRegistryRoots'), 'capcut.js must auto-detect CapCut custom draft path via Registry');
+    const exeBuf = fs.readFileSync(path.join(__dirname, 'AutoSub Typo Pro.exe'));
+    assert(exeBuf.includes(Buffer.from('AutoSub Typo Pro for CapCut', 'utf16le')), 'AutoSub Typo Pro.exe must have updated ProductName');
+    assert(!exeBuf.includes(Buffer.from('EditorNghiepdu', 'utf16le')), 'AutoSub Typo Pro.exe must not retain old CompanyName');
+    console.log('UI & packaging checks passed: layout, icon, exe metadata, CapCut registry portability');
+
+    console.log('\nALL VERIFICATION CHECKS PASSED!');
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+main().catch((err) => {
+  console.error('TEST FAILED:', err);
+  process.exit(1);
+});

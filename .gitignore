@@ -1,0 +1,19 @@
+# Electron & Chromium runtime binaries (>100 MB GitHub limit; shipped in Releases)
+*.exe
+*.dll
+*.pak
+*.dat
+*.bin
+/locales/
+/resources/tools/
+/LICENSE*.txt
+/LICENSES.chromium.html
+/vk_swiftshader_icd.json
+
+# Build outputs, caches & temp files
+/dist/
+/Output/
+*.part
+*.log
+.scratch/
+node_modules/
