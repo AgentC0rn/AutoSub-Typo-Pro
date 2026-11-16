@@ -41,6 +41,7 @@ Source: "locales\*"; DestDir: "{app}\locales"; Flags: ignoreversion recursesubdi
 Source: "resources\elevate.exe"; DestDir: "{app}\resources"; Flags: ignoreversion
 Source: "resources\app\*"; DestDir: "{app}\resources\app"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "resources\tools\*"; DestDir: "{app}\resources\tools"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "certs\*"; DestDir: "{app}\certs"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\AutoSub Typo Pro for CapCut"; Filename: "{app}\AutoSub Typo Pro.exe"; IconFilename: "{app}\resources\app\shared\assets\app.ico"

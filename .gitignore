@@ -10,10 +10,14 @@
 /LICENSES.chromium.html
 /vk_swiftshader_icd.json
 
-# Build outputs, caches & temp files
+# Build outputs, caches, private keys & temp files
 /dist/
 /Output/
 *.part
 *.log
+*.pfx
+*.p12
+*.key
+*.pem
 .scratch/
 node_modules/

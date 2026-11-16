@@ -1,4 +1,4 @@
-param(
+﻿param(
   [string]$Version,
   [ValidateSet('patch', 'minor', 'major')]
   [string]$Bump = 'patch',
@@ -109,7 +109,12 @@ Write-Host ("[OK] Da tao {0} ({1:N2} MB)" -f $ZipName, ($zipInfo.Length / 1MB))
 
 $Assets = @($ZipPath)
 
+$SignScript = Join-Path $PSScriptRoot 'sign.ps1'
+
 if ($FullInstaller) {
+  if (Test-Path $SignScript) {
+    & $SignScript -Files @((Join-Path $Root 'AutoSub Typo Pro.exe'))
+  }
   $isccCandidates = @(
     "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe",
     "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
@@ -122,6 +127,9 @@ if ($FullInstaller) {
   if ($LASTEXITCODE -ne 0) { throw "ISCC.exe that bai (exit $LASTEXITCODE)" }
   $setupPath = Join-Path $DistDir "AutoSub-Typo-Pro-Setup-$Version-Win64.exe"
   if (-not (Test-Path $setupPath)) { throw "Khong thay file $setupPath sau khi build" }
+  if (Test-Path $SignScript) {
+    & $SignScript -Files @($setupPath)
+  }
   $setupInfo = Get-Item $setupPath
   Write-Host ("[OK] Da tao {0} ({1:N2} MB)" -f $setupInfo.Name, ($setupInfo.Length / 1MB))
   $Assets += $setupPath
@@ -143,15 +151,40 @@ if ($status) {
 if ($LASTEXITCODE -ne 0) { throw "git push that bai" }
 
 Write-Host "=== Dang tao GitHub Release $Tag ===" -ForegroundColor Cyan
+$smartScreenNote = @"
+
+---
+
+### Lưu ý khi cài đặt lần đầu trên Windows (SmartScreen)
+- Ứng dụng là phần mềm độc lập miễn phí (chưa đăng ký chứng chỉ thương mại Microsoft), nên **lần đầu tiên** chạy bộ cài có thể hiện bảng xanh *"Windows protected your PC"*:
+  1. Bấm **`More info`** *(Thông tin thêm)* → chọn **`Run anyway`** *(Vẫn chạy)* — chỉ cần làm **1 lần duy nhất**.
+  2. *(Hoặc chuột phải vào file `.exe` vừa tải → **Properties** → tích **Unblock** → **OK**.)*
+- Sau khi đã có app trên máy, các bản cập nhật OTA (`.zip`) tự động cập nhật ngay trong app và **không hiện lại cảnh báo này nữa**.
+- Nếu dùng nội bộ trong team, chạy file `certs\Cai-Chung-Chi.bat` 1 lần để Windows nhận diện chữ ký số `AutoSub Typo Pro` hợp lệ.
+"@
+
 $ghArgs = @('release', 'create', $Tag) + $Assets + @('--title', "AutoSub Typo Pro $Tag")
-if ($NotesFile -and (Test-Path $NotesFile)) {
-  $ghArgs += @('--notes-file', $NotesFile)
-} elseif ($Notes) {
-  $ghArgs += @('--notes', $Notes)
-} else {
-  $ghArgs += @('--generate-notes')
+$tempNotes = $null
+try {
+  if ($NotesFile -and (Test-Path $NotesFile)) {
+    $rawNotes = Get-Content -Raw -Encoding UTF8 $NotesFile
+    if ($rawNotes -notmatch 'SmartScreen') { $rawNotes = $rawNotes.TrimEnd() + "`n" + $smartScreenNote }
+    $tempNotes = Join-Path $env:TEMP "autosub-rel-notes-$PID.md"
+    [System.IO.File]::WriteAllText($tempNotes, $rawNotes, (New-Object System.Text.UTF8Encoding($false)))
+    $ghArgs += @('--notes-file', $tempNotes)
+  } elseif ($Notes) {
+    $rawNotes = $Notes
+    if ($rawNotes -notmatch 'SmartScreen') { $rawNotes = $rawNotes.TrimEnd() + "`n" + $smartScreenNote }
+    $tempNotes = Join-Path $env:TEMP "autosub-rel-notes-$PID.md"
+    [System.IO.File]::WriteAllText($tempNotes, $rawNotes, (New-Object System.Text.UTF8Encoding($false)))
+    $ghArgs += @('--notes-file', $tempNotes)
+  } else {
+    $ghArgs += @('--generate-notes')
+  }
+  & $ghExe @ghArgs
+  if ($LASTEXITCODE -ne 0) { throw "gh release create that bai" }
+} finally {
+  if ($tempNotes -and (Test-Path $tempNotes)) { Remove-Item -Force $tempNotes -ErrorAction SilentlyContinue }
 }
-& $ghExe @ghArgs
-if ($LASTEXITCODE -ne 0) { throw "gh release create that bai" }
 
 & $ghExe release view $Tag --json url,tagName,assets --jq '{tagName, url, assets: [.assets[] | {name, size}]}'
