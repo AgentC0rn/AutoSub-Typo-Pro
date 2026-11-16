@@ -151,7 +151,7 @@ if ($status) {
 if ($LASTEXITCODE -ne 0) { throw "git push that bai" }
 
 Write-Host "=== Dang tao GitHub Release $Tag ===" -ForegroundColor Cyan
-$smartScreenNote = @"
+$smartScreenNote = @'
 
 ---
 
@@ -161,7 +161,7 @@ $smartScreenNote = @"
   2. *(Hoặc chuột phải vào file `.exe` vừa tải → **Properties** → tích **Unblock** → **OK**.)*
 - Sau khi đã có app trên máy, các bản cập nhật OTA (`.zip`) tự động cập nhật ngay trong app và **không hiện lại cảnh báo này nữa**.
 - Nếu dùng nội bộ trong team, chạy file `certs\Cai-Chung-Chi.bat` 1 lần để Windows nhận diện chữ ký số `AgentC0rn` hợp lệ.
-"@
+'@
 
 $ghArgs = @('release', 'create', $Tag) + $Assets + @('--title', "AutoSub Typo Pro $Tag")
 $tempNotes = $null
