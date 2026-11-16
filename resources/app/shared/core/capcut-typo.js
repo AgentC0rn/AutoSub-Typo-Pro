@@ -127,9 +127,9 @@ const PRESETS = [
 
 const OVERLAP = 0.10;
 const OVERLAP_BORDER = 0.06;
-const LEAD = 0.04;
-const IN_DUR = 0.32;
-const OUT_DUR = 0.15;
+const LEAD = 0.05;
+const IN_DUR = 0.24;
+const OUT_DUR = 0.10;
 const GLOW = { strength: 0.08, range: 0.08 };
 
 const REF_HHEA_HEIGHT = 1.219; // Montserrat hhea (ascender - descender) / unitsPerEm
@@ -345,60 +345,60 @@ const ANIMS = {
     kf: () => ({})
   },
   fade: {
-    label: 'Mờ + trượt trái', dur: 0.32,
-    kf: (c) => ({ alpha: easeKeys(0, 1, 0.32, c.fps), x: easeKeys(c.x - 22 / (c.W / 2), c.x, 0.32, c.fps) })
+    label: 'Mờ + trượt trái', dur: 0.24,
+    kf: (c) => ({ alpha: easeKeys(0, 1, 0.10, c.fps, EASE.outCubic), x: easeKeys(c.x - 18 / (c.W / 2), c.x, 0.24, c.fps, EASE.outCubic) })
   },
   drop: {
-    label: 'Rơi nảy', dur: 0.45,
+    label: 'Rơi nảy', dur: 0.34,
     kf: (c) => ({
-      alpha: easeKeys(0, 1, 0.12, c.fps, EASE.outCubic),
-      y: easeKeys(c.y + (c.px * 0.9) / (c.H / 2), c.y, 0.45, c.fps, EASE.outBack(2.2))
+      alpha: easeKeys(0, 1, 0.09, c.fps, EASE.outCubic),
+      y: easeKeys(c.y + (c.px * 0.8) / (c.H / 2), c.y, 0.34, c.fps, EASE.outBack(2.0))
     })
   },
   whip: {
-    label: 'Trượt nhanh từ phải', dur: 0.38,
+    label: 'Trượt nhanh từ phải', dur: 0.28,
     kf: (c) => ({
-      alpha: easeKeys(0, 1, 0.1, c.fps, EASE.outCubic),
-      x: easeKeys(c.x + 260 / (c.W / 2), c.x, 0.38, c.fps, EASE.outBack(1.2))
+      alpha: easeKeys(0, 1, 0.08, c.fps, EASE.outCubic),
+      x: easeKeys(c.x + 220 / (c.W / 2), c.x, 0.28, c.fps, EASE.outBack(1.2))
     })
   },
   pop: {
-    label: 'Bật phóng to', dur: 0.4,
-    kf: (c) => ({ alpha: easeKeys(0, 1, 0.12, c.fps, EASE.outCubic), scale: easeKeys(0.35, 1, 0.4, c.fps, EASE.outBack(2.4)) })
+    label: 'Bật phóng to', dur: 0.30,
+    kf: (c) => ({ alpha: easeKeys(0, 1, 0.08, c.fps, EASE.outCubic), scale: easeKeys(0.50, 1, 0.30, c.fps, EASE.outBack(2.2)) })
   },
   slam: {
-    label: 'Đập vào', dur: 0.3,
-    kf: (c) => ({ alpha: easeKeys(0, 1, 0.1, c.fps, EASE.outCubic), scale: easeKeys(2.2, 1, 0.3, c.fps, EASE.outQuart) })
+    label: 'Đập vào', dur: 0.24,
+    kf: (c) => ({ alpha: easeKeys(0, 1, 0.08, c.fps, EASE.outCubic), scale: easeKeys(2.0, 1, 0.24, c.fps, EASE.outQuart) })
   },
   rise: {
-    label: 'Trồi lên', dur: 0.4,
-    kf: (c) => ({ alpha: easeKeys(0, 1, 0.3, c.fps, EASE.outCubic), y: easeKeys(c.y - (c.px * 0.6) / (c.H / 2), c.y, 0.4, c.fps, EASE.outCubic) })
+    label: 'Trồi lên', dur: 0.28,
+    kf: (c) => ({ alpha: easeKeys(0, 1, 0.10, c.fps, EASE.outCubic), y: easeKeys(c.y - (c.px * 0.5) / (c.H / 2), c.y, 0.28, c.fps, EASE.outCubic) })
   },
   elastic: {
-    label: 'Nảy đàn hồi', dur: 0.52,
-    kf: (c) => ({ alpha: easeKeys(0, 1, 0.12, c.fps, EASE.outCubic), scale: easeKeys(0.45, 1, 0.52, c.fps, EASE.outElastic) })
+    label: 'Nảy đàn hồi', dur: 0.42,
+    kf: (c) => ({ alpha: easeKeys(0, 1, 0.09, c.fps, EASE.outCubic), scale: easeKeys(0.55, 1, 0.42, c.fps, EASE.outElastic) })
   },
   float: {
-    label: 'Lướt êm Cinema', dur: 0.45,
+    label: 'Lướt êm Cinema', dur: 0.32,
     kf: (c) => ({
-      alpha: easeKeys(0, 1, 0.32, c.fps, EASE.outCubic),
-      scale: easeKeys(1.28, 1, 0.45, c.fps, EASE.outExpo),
-      y: easeKeys(c.y - (c.px * 0.35) / (c.H / 2), c.y, 0.45, c.fps, EASE.outCubic)
+      alpha: easeKeys(0, 1, 0.11, c.fps, EASE.outCubic),
+      scale: easeKeys(1.22, 1, 0.32, c.fps, EASE.outExpo),
+      y: easeKeys(c.y - (c.px * 0.30) / (c.H / 2), c.y, 0.32, c.fps, EASE.outCubic)
     })
   },
   wave: {
-    label: 'Lượn sóng', dur: 0.42,
+    label: 'Lượn sóng', dur: 0.32,
     kf: (c) => ({
-      alpha: easeKeys(0, 1, 0.16, c.fps, EASE.outCubic),
-      x: easeKeys(c.x - 80 / (c.W / 2), c.x, 0.42, c.fps, EASE.outBack(1.4)),
-      y: easeKeys(c.y - (c.px * 0.5) / (c.H / 2), c.y, 0.42, c.fps, EASE.outBack(1.8))
+      alpha: easeKeys(0, 1, 0.10, c.fps, EASE.outCubic),
+      x: easeKeys(c.x - 65 / (c.W / 2), c.x, 0.32, c.fps, EASE.outBack(1.4)),
+      y: easeKeys(c.y - (c.px * 0.42) / (c.H / 2), c.y, 0.32, c.fps, EASE.outBack(1.8))
     })
   },
   pulse: {
-    label: 'Nháy Neon', dur: 0.38,
+    label: 'Nháy Neon', dur: 0.30,
     kf: (c) => ({
-      alpha: [[0, 0], [0.06, 0.95], [0.12, 0.25], [0.19, 1], [0.38, 1]],
-      scale: easeKeys(0.75, 1, 0.38, c.fps, EASE.outBack(2.0))
+      alpha: [[0, 0], [0.05, 0.95], [0.10, 0.28], [0.16, 1], [0.30, 1]],
+      scale: easeKeys(0.75, 1, 0.30, c.fps, EASE.outBack(2.0))
     })
   }
 };

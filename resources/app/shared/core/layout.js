@@ -42,14 +42,14 @@
 
   var DEFAULTS = {
     lang: 'vi',
-    gapSplit: 0.34,     // khoảng lặng (giây) để tách phát ngôn
+    gapSplit: 0.50,     // khoảng lặng lớn (giây) để ép tách phát ngôn; khoảng nghỉ 0.18–0.49s do DP chấm điểm ưu tiên ngắt mềm
     maxWords: 5,        // mục tiêu 1–5 từ / cụm (tối đa mềm tới 6 nếu cần giữ trọn cụm nghĩa)
     maxChars: 25,       // mục tiêu ký tự / cụm (tối đa cứng ~33 để giữ nguyên từ ghép/cụm ngắn)
     lineChars: 11,      // ký tự / dòng chữ thường
     maxLines: 3,
     emphasisRate: 0.6,
-    lead: 0.04,
-    hold: 0.45
+    lead: 0.05,
+    hold: 0.28
   };
 
   function norm(t) { return Vi ? Vi.norm(t) : String(t).toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ''); }
@@ -566,10 +566,10 @@
       var start = Math.max(0, ws[0].start - o.lead);
       if (prev && typeof prev.end === 'number') start = Math.max(start, prev.end);
       var lastEnd = ws[ws.length - 1].end;
-      var end = lastEnd + o.hold;
-      if (next && next.words && next.words.length) end = Math.min(end, next.words[0].start - o.lead - 0.02);
+      var hardCap = (next && next.words && next.words.length) ? Math.max(start + 0.08, next.words[0].start - o.lead - 0.01) : Infinity;
+      var end = Math.min(lastEnd + o.hold, hardCap);
       g.start = start;
-      g.end = Math.max(g.start + 0.04, Math.max(end, lastEnd));
+      g.end = Math.max(g.start + 0.08, end);
     }
     return groups;
   }

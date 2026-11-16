@@ -4,6 +4,19 @@ Tất cả các thay đổi đáng chú ý của dự án được ghi nhận t�
 
 ---
 
+## [v2.0.6] - 2026-11-16
+
+### Cải tiến & Sửa lỗi (Improvements & Bug Fixes)
+- **Đồng bộ thời gian trích xuất text & hiệu ứng chuẩn sát với Voice:**
+  - Nâng cấp `whisper.js`: kích hoạt **DTW token-level timestamps** (`-nfa -dtw <preset> -ojf` khớp từng âm tiết trong `tokens[].t_dtw`, lọc bỏ token dấu câu thừa hay kéo dài qua khoảng lặng), loại bỏ hiện tượng chữ bị lệch sớm/trễ `0.25s–0.60s` ở các đoạn ngắt nhịp hoặc trước khoảng nghỉ (kèm fallback an toàn nếu model không hỗ trợ DTW).
+  - Bổ sung `alignWordsToAudio()` trong `audio.js`: quét đường bao năng lượng sóng âm 16kHz theo cửa sổ 10ms để bám khít điểm bắt đầu bật âm sau khoảng lặng và cắt gọn phần đuôi im lặng kéo dài sau mỗi câu.
+  - Chuẩn hoá `retime()` trong `layout.js` (không để `hold` của cụm trước đẩy trễ thời điểm xuất hiện cụm kế tiếp) và tinh chỉnh toàn bộ animation trong `capcut-typo.js` (`LEAD = 0.05s`, `OUT_DUR = 0.10s`, alpha vào rõ nét trong `0.08s–0.11s` theo `outCubic` để chữ hiện sắc nét đúng nhịp phát âm).
+- **Sửa lỗi hiển thị & làm gọn gàng giao diện Bước 3 & Bước 4:**
+  - Sửa lỗi cột **Font & màu** bị tràn chuỗi đường dẫn `«C:\Users\...»` đè lên khung chọn font (do truyền nhầm `s.font` vào tham số nhãn mới của `styleTag`) và khóa tràn khung `.srow .lbl`.
+  - Sửa lỗi thanh **Bút nhấn** bị kéo giãn thành 5 thanh ngang toàn chiều rộng (bổ sung `width: auto; flex: none;` cho `.brush-btn`) để xếp gọn thành 1 hàng nút nhỏ xinh; làm gọn tiêu đề, nút thao tác và dòng hướng dẫn ở Bước 3.
+
+---
+
 ## [v2.0.5] - 2026-11-16
 
 ### Tính năng mới (New Features)

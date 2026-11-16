@@ -270,6 +270,91 @@ async function buildMasterWav(ffmpeg, segments, projectDurationSec, outWav, onPr
   }
 }
 
+/**
+ * Căn chỉnh mốc thời gian đầu/cuối của từng từ bám theo năng lượng sóng âm thực tế trong file WAV 16kHz:
+ * - Bắt chính xác điểm bắt đầu bật âm sau khoảng lặng/thở (chống hiện chữ sớm hoặc muộn).
+ * - Cắt gọn phần im lặng kéo dài sau từ cuối cụm (chống giữ chữ trễ làm đẩy cụm kế tiếp).
+ */
+function alignWordsToAudio(words, wav) {
+  if (!Array.isArray(words) || !words.length || !wav || !wav.samples || !wav.samples.length) return words;
+  const { sampleRate, samples } = wav;
+  const stepSec = 0.01;
+  const step = Math.max(1, Math.round(sampleRate * stepSec));
+  const win = Math.max(step, Math.round(sampleRate * 0.02));
+  const nFrames = Math.floor(Math.max(0, samples.length - win) / step) + 1;
+  if (nFrames < 5) return words;
+
+  const env = new Float32Array(nFrames);
+  const nonZero = [];
+  for (let f = 0; f < nFrames; f++) {
+    const a = f * step, b = Math.min(samples.length, a + win);
+    let sum = 0;
+    for (let i = a; i < b; i++) { const v = samples[i] / 32768; sum += v * v; }
+    const r = Math.sqrt(sum / Math.max(1, b - a));
+    env[f] = r;
+    if (r > 0.0005) nonZero.push(r);
+  }
+  if (!nonZero.length) return words;
+  nonZero.sort((a, b) => a - b);
+  const p15 = nonZero[Math.floor(nonZero.length * 0.15)] || 0.001;
+  const p85 = nonZero[Math.floor(nonZero.length * 0.85)] || 0.05;
+  const speechThr = Math.max(0.006, Math.min(p85 * 0.22, p15 * 3.5 + 0.008));
+
+  const toFrame = (t) => Math.max(0, Math.min(nFrames - 1, Math.round(t / stepSec)));
+  const minSilentBefore = (f) => {
+    let cnt = 0;
+    for (let k = Math.max(0, f - 5); k <= Math.min(nFrames - 1, f + 1); k++) if (env[k] < speechThr) cnt++;
+    return cnt >= 4;
+  };
+
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i];
+    const prev = words[i - 1];
+    const next = words[i + 1];
+    const fStart = toFrame(w.start);
+
+    // 1. Bám onset phát âm sau khoảng lặng hoặc khi đầu từ đang nằm trong vùng im lặng
+    if (env[fStart] < speechThr || minSilentBefore(fStart)) {
+      const minT = prev ? prev.start + 0.06 : 0;
+      const maxT = next ? Math.min(next.start - 0.04, w.start + 0.24) : w.start + 0.24;
+      const lo = toFrame(Math.max(minT, w.start - 0.16));
+      const hi = toFrame(maxT);
+      let activeFrom = -1;
+      for (let f = lo; f <= hi; f++) {
+        if (env[f] >= speechThr && (f + 1 > hi || env[f + 1] >= speechThr * 0.7)) {
+          activeFrom = f;
+          break;
+        }
+      }
+      if (activeFrom >= 0) {
+        const snapped = Math.max(minT, activeFrom * stepSec - 0.02);
+        w.start = snapped;
+        if (w.end < w.start + 0.08) w.end = w.start + 0.08;
+      }
+    }
+
+    // 2. Cắt gọn khoảng lặng dư ở đuôi từ (đặc biệt trước khoảng nghỉ hoặc câu mới)
+    const fEnd = toFrame(w.end);
+    const fMinEnd = toFrame(w.start + 0.07);
+    if (fEnd > fMinEnd + 2 && env[fEnd] < speechThr * 0.85) {
+      let lastAct = -1;
+      for (let f = fEnd; f >= fMinEnd; f--) {
+        if (env[f] >= speechThr * 0.8) { lastAct = f; break; }
+      }
+      if (lastAct >= 0) {
+        w.end = Math.max(w.start + 0.08, Math.min(w.end, lastAct * stepSec + 0.05));
+      }
+    }
+  }
+
+  for (let i = 1; i < words.length; i++) {
+    if (words[i].start < words[i - 1].start + 0.04) words[i].start = words[i - 1].start + 0.04;
+    if (words[i - 1].end > words[i].start) words[i - 1].end = Math.max(words[i - 1].start + 0.04, words[i].start);
+    if (words[i].end < words[i].start + 0.05) words[i].end = words[i].start + 0.05;
+  }
+  return words;
+}
+
 /** Gắn độ to (dBFS RMS) cho từng từ. Thời gian của từ tính theo đầu file WAV. */
 function addLoudness(words, wav) {
   const { sampleRate, samples } = wav;
@@ -294,6 +379,7 @@ module.exports = {
   writeWav,
   deduplicateAudioSegments,
   buildMasterWav,
+  alignWordsToAudio,
   addLoudness,
   run
 };

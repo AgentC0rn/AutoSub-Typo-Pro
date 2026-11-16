@@ -426,7 +426,31 @@ async function main() {
     assert(ctx.AutoSubSRT && typeof ctx.AutoSubSRT.groupMovieCues === 'function', 'Electron window must load AutoSubSRT');
     const eGs = ctx.AutoSubLayout.buildLayout(sampleViWords, { lang: 'vi' });
     assert(eGs.some((g) => g.words.map((w) => w.text).join(' ').includes('ở kỹ thuật triệt Biomatic')), 'Electron AutoSubLayout must use AutoSubViPhrases');
-    console.log('Multi-emphasis, smart VI segmentation, Undo/Redo, placeholder & Electron UMD checks passed');
+
+    // Test 10g: Đồng bộ thời gian DTW + bám sóng âm & kiểm tra sửa lỗi UI 2.0.6
+    assert.strictEqual(whisper.dtwPresetForModel('ggml-large-v3-turbo-q5_0.bin'), 'large.v3.turbo');
+    assert.strictEqual(whisper.dtwPresetForModel('ggml-large-v3.bin'), 'large.v3');
+    const mockDtwObj = {
+      transcription: [
+        { text: ' Hết', offsets: { from: 30, to: 210 }, tokens: [{ text: ' H', offsets: { from: 30, to: 180 }, t_dtw: 28 }, { text: 'ết', offsets: { from: 180, to: 210 }, t_dtw: 34 }] },
+        { text: ' sạch', offsets: { from: 210, to: 900 }, tokens: [{ text: ' s', offsets: { from: 210, to: 440 }, t_dtw: 48 }, { text: '.', offsets: { from: 850, to: 900 }, t_dtw: 88 }] }
+      ]
+    };
+    const dtwWords = whisper.parseWhisperJson(mockDtwObj, { lang: 'vi' });
+    assert(Math.abs(dtwWords[0].start - 0.205) < 0.01, `Expected DTW onset shift ~0.205s, got ${dtwWords[0].start}`);
+    assert(dtwWords[1].end < 0.70, `DTW must exclude trailing punctuation silence outlier (got end=${dtwWords[1].end})`);
+    const sr = 16000;
+    const pcm = new Int16Array(sr * 2);
+    for (let i = Math.floor(0.35 * sr); i < Math.floor(0.70 * sr); i++) pcm[i] = 12000;
+    const snapWs = [{ text: 'Alo', start: 0.22, end: 1.40 }];
+    audio.alignWordsToAudio(snapWs, { sampleRate: sr, samples: pcm });
+    assert(snapWs[0].start >= 0.30 && snapWs[0].start <= 0.36, `alignWordsToAudio must snap onset into [0.30..0.36], got ${snapWs[0].start}`);
+    assert(snapWs[0].end >= 0.70 && snapWs[0].end <= 0.80, `alignWordsToAudio must trim silent tail to <=0.80, got ${snapWs[0].end}`);
+    const cssText = cssBuf.toString('utf8');
+    assert(/\.brush-btn\s*\{[^}]*width:\s*auto/s.test(cssText), '.brush-btn must set width: auto to prevent vertical stretching');
+    assert(/\.srow\s+\.lbl\s*\{[^}]*overflow:\s*hidden/s.test(cssText), '.srow .lbl must prevent pill text bleed into font picker');
+    assert(!rendJs.includes('styleTag(k, k === \'base\' ? \'#eef3ff\' : s.color, false, s.font)'), 'renderInspector must not pass s.font into styleTag snippet slot');
+    console.log('Multi-emphasis, smart VI segmentation, Undo/Redo, placeholder, Electron UMD, DTW/audio sync & UI checks passed');
 
     console.log('\nALL VERIFICATION CHECKS PASSED!');
   } finally {

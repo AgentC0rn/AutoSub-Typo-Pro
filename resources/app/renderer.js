@@ -707,6 +707,7 @@ async function listen() {
       } else throw err;
     }
 
+    audio.alignWordsToAudio(ws, mixRes.wavData);
     audio.addLoudness(ws, mixRes.wavData);
     if (state.words.length) pushUndo('Nhận dạng lại');
     state.words = ws.sort((a, b) => a.start - b.start);
@@ -855,8 +856,8 @@ function updateModeUI() {
   const hint = $('#groups-hint');
   if (hint) {
     hint.textContent = state.mode === 'movie'
-      ? '(chế độ Sub Phim Ngang: mỗi câu là 1 dòng ngang 1–2 hàng ở đáy khung kiểu phim/Netflix · bấm câu để xem thử)'
-      : '(bấm/kéo qua nhiều từ = nhấn 1 cụm · Shift+bấm = nối cụm · bấm nhãn = đổi kiểu · có thể nhấn nhiều kiểu trong 1 khung · ✂ hoặc Alt+bấm = tách cụm · Ctrl+Z/Y = hoàn tác)';
+      ? '(chế độ Sub Phim Ngang: mỗi câu là 1 dòng ngang 1–2 hàng ở đáy khung · bấm để xem thử)'
+      : '(bấm/kéo từ = nhấn cụm · bấm nhãn = đổi kiểu · ✂/Alt+bấm = tách · Ctrl+Z/Y = hoàn tác)';
   }
 }
 
@@ -972,7 +973,7 @@ function renderInspector() {
     row.className = 'srow';
     row.innerHTML = `<div class="lbl"></div><button class="pick"><span class="sample"></span><span class="meta"></span><span class="go">Bấm để đổi font ›</span></button><input type="color" title="Bấm để đổi màu" />`;
     const lbl = row.querySelector('.lbl');
-    lbl.appendChild(styleTag(k, k === 'base' ? '#eef3ff' : s.color, false, s.font));
+    lbl.appendChild(styleTag(k, k === 'base' ? '#eef3ff' : s.color, false));
     const sub = document.createElement('span');
     sub.className = 'sub';
     sub.textContent = k === 'base' ? 'chữ không nhấn' : 'dùng cho từ nhấn';
