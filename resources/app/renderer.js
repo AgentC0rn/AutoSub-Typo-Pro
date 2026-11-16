@@ -1843,6 +1843,10 @@ function initAutoUpdater() {
     }
   }
 
+  ipcRenderer.on('app-just-updated', (_e, ver) => {
+    log(`Đã tự động cập nhật OTA thành công lên phiên bản v${ver}!`, 'ok');
+  });
+
   ipcRenderer.on('update-progress', (_e, prog) => {
     if (!prog) return;
     const pct = Math.round((prog.percent || 0) * 100);
@@ -1876,7 +1880,7 @@ function initAutoUpdater() {
     btnClose.disabled = true;
     progWrap.hidden = false;
     progTxt.textContent = 'Đang kết nối GitHub để tải bản cập nhật…';
-    const r = await ipcRenderer.invoke('install-update', pendingUpdate.asset);
+    const r = await ipcRenderer.invoke('install-update', pendingUpdate.asset, pendingUpdate.tagName);
     if (!r || !r.ok) {
       downloading = false;
       btnStart.disabled = false;
@@ -1890,6 +1894,12 @@ function initAutoUpdater() {
     }
   });
 
-  setTimeout(() => runCheck(true), 1800);
+  ipcRenderer.invoke('get-pending-update').then((res) => {
+    if (res && res.hasUpdate) {
+      pendingUpdate = res;
+      btnCheck.className = 'pill pill-cyan';
+      btnCheck.textContent = `⬆ Có bản v${res.latestVersion}`;
+    }
+  }).catch(() => {});
 }
 init();
