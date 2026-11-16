@@ -7,7 +7,7 @@ Tất cả các thay đổi đáng chú ý của dự án được ghi nhận t�
 ## [v2.0.3] - 2026-11-16
 
 ### Tính năng mới & Cải tiến
-- **Ghi thẳng vào project & timeline đang chọn (không tạo bản sao):**
+- **Ghi thẳng vào project & timeline đang chọn (không duplicate):**
   - Bấm **"Ghi thẳng vào CapCut"** sẽ ghi trực tiếp vào chính project và timeline bạn đã chọn từ đầu (tự cập nhật thời gian sửa trong `draft_meta_info.json` và `root_meta_info.json` để project hiển thị mới nhất trong CapCut).
   - Bổ sung tùy chọn **"Thay thế phụ đề AutoSub cũ trong timeline này (khi ghi lại)"** (bật mặc định): mỗi lần chỉnh sửa và ghi lại sẽ thay sạch track AutoSub trước đó mà không chồng nhiều lớp trùng lặp và không chạm vào các track chữ thủ công khác của bạn. Vẫn tự động giữ bản sao lưu `.autosub.bak` trước lần ghi đầu tiên.
 - **Chế độ mới: 🎬 Sub Phim Ngang (Horizontal Movie Subtitles):**
@@ -20,6 +20,9 @@ Tất cả các thay đổi đáng chú ý của dự án được ghi nhận t�
   - **CapCut Viral Viền Đậm:** phong cách Alex Hormozi / Shorts với viền đen dày + nhấn vàng neon / cyan.
   - **Phim Điện Ảnh Vàng Cổ Điển:** chữ vàng ấm cổ điển kèm viền đen mảnh sắc nét.
   - Đồng bộ thuộc tính **Viền chữ (`strokes`)** và **Hộp nền (`background_*`)** chuẩn schema CapCut 9.8+ (`check_flag` 23 / 47) cả trên màn hình xem thử lẫn khi xuất vào CapCut.
+- **Chữ ký số nội bộ `AgentC0rn` & hướng dẫn SmartScreen:**
+  - Tích hợp script ký số nội bộ [sign.ps1](scripts/sign.ps1) với chứng chỉ `CN=AgentC0rn` (khóa công khai tại `certs/AgentC0rn.cer` và script cài tin cậy 1-click `certs/Cai-Chung-Chi.bat`).
+  - Tự động đính kèm hướng dẫn SmartScreen lần đầu cài đặt vào Release Notes trên GitHub.
 
 ---
 
