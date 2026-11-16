@@ -86,7 +86,7 @@
           <h2><span class="num">1</span> Chọn project CapCut</h2>
           <span id="drafts-root-info" class="root-chip" title="Thư mục CapCut Drafts đang quét"></span>
         </div>
-        <div class="muted small">Tự động nhận cả project có nested Timelines (CapCut 9.x). Khi xuất luôn tạo <b>bản sao an toàn</b>.</div>
+        <div class="muted small">Tự động nhận cả project có nested Timelines (CapCut 9.x). Ghi thẳng vào project &amp; timeline đang chọn (tự lưu <code>.autosub.bak</code>).</div>
         <div class="drafts-head">
           <input id="draft-filter" type="text" placeholder="Tìm project…" />
           <button id="btn-drafts" class="ghost" title="Tải lại danh sách project">⟳ Tải lại</button>
@@ -131,14 +131,18 @@
 
       <section class="card">
         <div class="card-head">
-          <h2><span class="num">3</span> Typography</h2>
+          <h2><span class="num">3</span> <span id="step3-title">Typography &amp; Phụ đề</span></h2>
           <div class="track-actions">
             <button id="btn-split-playhead" class="ghost mini" type="button" title="Tách cụm chữ tại vị trí đầu phát (Ctrl+B)" disabled>✂ Tách tại đầu phát</button>
-            <button id="btn-layout" class="ghost mini" disabled>Dàn lại typography</button>
+            <button id="btn-layout" class="ghost mini" disabled>Dàn lại</button>
           </div>
         </div>
-        <div class="sub-h">Các cụm chữ
-          <span class="muted small">(bấm cụm = sửa riêng · bấm từ = bật/tắt nhấn · Shift+bấm = nối từ · bấm nhãn = đổi kiểu · ✂ giữa 2 từ hoặc Alt+bấm từ = tách cụm · ⤓ Gộp = nối với cụm sau · Ctrl+B = tách tại đầu phát)</span>
+        <div class="mode-switch" role="tablist" aria-label="Chế độ hiển thị chữ">
+          <button id="mode-typo" class="mode-btn sel" type="button">✨ Typography nổi bật</button>
+          <button id="mode-movie" class="mode-btn" type="button">🎬 Sub Phim Ngang</button>
+        </div>
+        <div id="groups-sub" class="sub-h">Các cụm chữ
+          <span id="groups-hint" class="muted small">(bấm cụm = sửa riêng · bấm từ = bật/tắt nhấn · Shift+bấm = nối từ · bấm nhãn = đổi kiểu · ✂ giữa 2 từ hoặc Alt+bấm từ = tách cụm · ⤓ Gộp = nối với cụm sau · Ctrl+B = tách tại đầu phát)</span>
         </div>
         <div id="groups" class="groups"></div>
         <div class="box-resizer" data-box="groups" title="Kéo để thay đổi chiều cao danh sách cụm chữ · Đúp chuột để đặt lại"></div>
@@ -174,10 +178,11 @@
 
       <section class="card">
         <h2><span class="num">5</span> Ghi vào CapCut</h2>
-        <label class="check"><input id="opt-glow" type="checkbox" checked /> Phát sáng nhẹ cho từ nhấn</label>
-        <label class="check"><input id="opt-sub" type="checkbox" /> Thêm phụ đề thường ở đáy khung</label>
+        <label id="opt-glow-wrap" class="check"><input id="opt-glow" type="checkbox" checked /> Phát sáng nhẹ cho từ nhấn</label>
+        <label id="opt-sub-wrap" class="check"><input id="opt-sub" type="checkbox" /> Thêm phụ đề thường ở đáy khung</label>
+        <label class="check"><input id="opt-replace" type="checkbox" checked /> Thay thế phụ đề AutoSub cũ trong timeline này (khi ghi lại)</label>
         <label id="opt-all-tl-wrap" class="check" hidden><input id="opt-all-tl" type="checkbox" checked /> <span id="opt-all-tl-label">Ghi cả các timeline đã nhận dạng</span></label>
-        <button id="btn-write" class="primary pill-cta" disabled>Ghi vào CapCut</button>
+        <button id="btn-write" class="primary pill-cta" disabled>Ghi thẳng vào CapCut</button>
         <div id="write-result" class="result" hidden></div>
       </section>
     </div>

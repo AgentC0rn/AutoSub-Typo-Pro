@@ -3,6 +3,7 @@ param(
   [ValidateSet('patch', 'minor', 'major')]
   [string]$Bump = 'patch',
   [string]$Notes = '',
+  [string]$NotesFile = '',
   [switch]$FullInstaller,
   [switch]$SkipPush,
   [switch]$NoBump
@@ -143,7 +144,9 @@ if ($LASTEXITCODE -ne 0) { throw "git push that bai" }
 
 Write-Host "=== Dang tao GitHub Release $Tag ===" -ForegroundColor Cyan
 $ghArgs = @('release', 'create', $Tag) + $Assets + @('--title', "AutoSub Typo Pro $Tag")
-if ($Notes) {
+if ($NotesFile -and (Test-Path $NotesFile)) {
+  $ghArgs += @('--notes-file', $NotesFile)
+} elseif ($Notes) {
   $ghArgs += @('--notes', $Notes)
 } else {
   $ghArgs += @('--generate-notes')

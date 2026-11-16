@@ -1,9 +1,7 @@
 /*
- * Chuyển các cụm chữ (core/layout.js) thành đoạn chữ CapCut, cùng thiết kế với template Premiere:
- * khối chữ quanh 72% chiều cao, mỗi dòng ≤ 82% bề ngang, cụm 3 dòng xếp so le,
- * bóng đổ cho mọi dòng, từ nhấn có màu + phát sáng, chữ hiện theo lời nói (animation "Hiện sang phải"). (Node)
+ * Chuyển các cụm chữ (core/layout.js) hoặc phụ đề ngang (core/srt.js) thành đoạn chữ CapCut.
  *
- * Hiệu chỉnh trên CapCut 9.4/9.7 (khung 1080x1920):
+ * Hiệu chỉnh trên CapCut 9.4/9.7/9.8:
  *   - toạ độ x,y chuẩn hoá theo nửa khung, y hướng lên, neo ở tâm chữ
  *   - 1 đơn vị cỡ chữ ≈ min(W,H)/216 px
  */
@@ -56,7 +54,8 @@ const PRESETS = [
   {
     id: 'viral',
     name: 'Viral TikTok / Reels',
-    desc: 'Oswald + Anton + Dancing',
+    desc: 'Oswald + Anton + Viền đen đậm',
+    border: { color: '#000000', width: 0.08 },
     styles: {
       base:   { file: 'Oswald-Bold.ttf', color: '#ffffff' },
       script: { file: 'DancingScript-Bold.ttf', color: '#ff4d8d' },
@@ -74,17 +73,66 @@ const PRESETS = [
       blue:   { file: 'EncodeSansSemiExpanded-Black.ttf', color: '#36a9f0' },
       gold:   { file: 'EncodeSansSemiExpanded-Black.ttf', color: '#f4c454' }
     }
+  },
+  {
+    id: 'netflix-cinema',
+    name: 'Netflix Cinema Sub',
+    desc: 'Trắng ngà sạch · Bóng đổ mềm chuẩn phim',
+    movieDefault: true,
+    shadow: { alpha: 0.78, distance: 4, smoothing: 0.72 },
+    styles: {
+      base:   { file: 'SVN-Gilroy Bold.otf', color: '#f5f5f0' },
+      script: { file: 'Lora-BoldItalic.ttf', color: '#fde68a' },
+      blue:   { file: 'Montserrat-Bold.ttf', color: '#bae6fd' },
+      gold:   { file: 'Montserrat-Bold.ttf', color: '#fde68a' }
+    }
+  },
+  {
+    id: 'criterion-pill',
+    name: 'Hộp Nền Tối (YouTube / DVD)',
+    desc: 'Nền đen mờ bo góc · Dễ đọc trên mọi cảnh sáng',
+    bg: { color: '#000000', alpha: 0.62, style: 1, round: 0.35 },
+    styles: {
+      base:   { file: 'EncodeSansSemiExpanded-SemiBold.ttf', color: '#ffffff' },
+      script: { file: 'Lora-BoldItalic.ttf', color: '#fde047' },
+      blue:   { file: 'EncodeSansSemiExpanded-Bold.ttf', color: '#7dd3fc' },
+      gold:   { file: 'EncodeSansSemiExpanded-Bold.ttf', color: '#fde047' }
+    }
+  },
+  {
+    id: 'hormozi-punch',
+    name: 'CapCut Viral Viền Đậm',
+    desc: 'Viền đen dày + Vàng Neon (Alex Hormozi)',
+    border: { color: '#000000', width: 0.11 },
+    styles: {
+      base:   { file: 'Montserrat-Black.ttf', color: '#ffffff' },
+      script: { file: 'Anton-Regular.ttf', color: '#facc15' },
+      blue:   { file: 'Montserrat-Black.ttf', color: '#00e5ff' },
+      gold:   { file: 'Montserrat-Black.ttf', color: '#facc15' }
+    }
+  },
+  {
+    id: 'golden-cinema',
+    name: 'Phim Điện Ảnh Vàng Cổ Điển',
+    desc: 'Chữ vàng ấm + Viền mảnh (Hong Kong / Retro)',
+    border: { color: '#000000', width: 0.065 },
+    styles: {
+      base:   { file: 'Montserrat-Bold.ttf', color: '#fde047' },
+      script: { file: 'Lora-BoldItalic.ttf', color: '#fffbeb' },
+      blue:   { file: 'Montserrat-Bold.ttf', color: '#fef08a' },
+      gold:   { file: 'Montserrat-Black.ttf', color: '#facc15' }
+    }
   }
 ];
-const OVERLAP = 0.14;   // dòng sau chồng lên dòng trước (theo cỡ chữ dòng sau), như bản Premiere
-const REVEAL_TAIL = 0.25;
+
+const OVERLAP = 0.14;
+const LEAD = 0.04;
+const IN_DUR = 0.32;
+const OUT_DUR = 0.15;
+const GLOW = { strength: 0.08, range: 0.08 };
 
 const toHex = (c) => '#' + c.map((v) => Math.round(Math.max(0, Math.min(1, v)) * 255).toString(16).padStart(2, '0')).join('').toUpperCase();
 
-/**
- * Kiểu chữ thực dùng = mặc định + tuỳ chỉnh của người dùng (o.styles[style] = { font: đường dẫn file, color: [r,g,b] }).
- * Hệ số "ink" áp cho các font viết tay có nét vươn ra ngoài bề ngang ký tự.
- */
 function styleOf(name, o) {
   const def = STYLE[name] || STYLE.base;
   const ov = (o.styles && o.styles[name]) || {};
@@ -97,18 +145,12 @@ function styleOf(name, o) {
   return st;
 }
 
-/** Đường dẫn font: ưu tiên bản đã cài cho user (ổn định khi cập nhật app), sau đó thư mục fonts kèm app. */
 function fontPath(file, appFontsDir) {
   const user = path.join(process.env.LOCALAPPDATA || '', 'Microsoft', 'Windows', 'Fonts', file);
   if (fs.existsSync(user)) return user;
   return path.join(appFontsDir, file);
 }
 
-/**
- * @param groups  kết quả Layout.buildLayout
- * @param o { width, height, fontsDir, yPos=0.72, maxWidth=0.82, scale=1, shadow=true, glow=true }
- * @returns đoạn chữ cho capcut.addTextTrack
- */
 function buildSegments(groups, o) {
   o = Object.assign({ width: 1080, height: 1920, yPos: 0.72, maxWidth: 0.82, scale: 1, shadow: true, glow: true }, o);
   const W = o.width, H = o.height;
@@ -117,9 +159,7 @@ function buildSegments(groups, o) {
   const segs = [];
 
   groups.forEach((g, gi) => {
-    // Tuỳ chỉnh riêng của cụm (như thuộc tính của 1 clip MOGRT) đè lên mặc định.
     const go = groupOpts(o, g, gi);
-    // 1. Cỡ chữ từng dòng (co lại nếu vượt khung an toàn).
     const lines = g.lines.map((ln) => {
       const st = styleOf(ln.style, go);
       const file = st.font || fontPath(st.file, o.fontsDir);
@@ -130,20 +170,18 @@ function buildSegments(groups, o) {
       return { st, file, text, px, w: Math.min(w, maxW), h: px * st.lh, words: ln.words, style: ln.style };
     });
 
-    // 2. Xếp dọc: các dòng chồng nhẹ, cả khối căn giữa quanh yPos.
     let y = 0;
     lines.forEach((l, i) => { if (i > 0) y -= OVERLAP * l.px; l.top = y; y += l.h; });
     const total = y, top = H * go.yPos - total / 2;
     const anim = ANIMS[go.anim] || ANIMS.fade;
     const bw = Math.max(...lines.map((l) => l.w));
 
-    // 3. Mỗi TỪ là 1 đoạn riêng, đặt đúng vị trí trong dòng; hiện đúng lúc được nói bằng keyframe ease.
     let wordIdx = 0;
     lines.forEach((l, i) => {
       const cy = top + l.top + l.h / 2;
       let cx = W / 2;
-      if (lines.length === 3 && i === 0) cx -= (bw - l.w) / 2;          // dòng đầu canh trái khối
-      if (lines.length === 3 && i === 2) cx += (bw - l.w) / 2;          // dòng cuối canh phải khối
+      if (lines.length === 3 && i === 0) cx -= (bw - l.w) / 2;
+      if (lines.length === 3 && i === 2) cx += (bw - l.w) / 2;
       const adv = ttf.measure(l.file, l.text, l.px);
       const left = cx - adv / 2;
       const yN = -(cy - H / 2) / (H / 2);
@@ -165,10 +203,12 @@ function buildSegments(groups, o) {
           start, end: Math.max(start + 0.2, end),
           x: +xN.toFixed(4),
           y: +yN.toFixed(4),
-          shadow: o.shadow,
+          shadow: go.shadow,
+          border: go.border || null,
+          bg: go.bg || null,
           glow: o.glow && l.st.glow ? Object.assign({ color: l.st.glow }, GLOW) : null,
           anim: null,
-          fadeOut: true, fps: o.fps, inDur: anim.dur,
+          fadeOut: anim.dur > 0, fps: o.fps, inDur: anim.dur,
           keyframes: anim.kf({ x: xN, y: yN, W, H, fps: o.fps || 30, px: l.px })
         });
       });
@@ -177,24 +217,15 @@ function buildSegments(groups, o) {
   return noOverlap(segs);
 }
 
-/* ---- Hiệu ứng hiện chữ bằng keyframe ---- */
-const LEAD = 0.04;          // hiện sớm hơn tiếng nói một chút
-const IN_DUR = 0.32;        // thời gian hiện 1 từ (giây)
-const OUT_DUR = 0.15;       // thời gian mờ dần khi cụm kết thúc
-const SLIDE_PX = 22;        // trượt nhẹ từ trái sang (px trên khung 1080)
-const GLOW = { strength: 0.08, range: 0.08 };  // phát sáng rất nhẹ, không loá
-
-/* Đường cong (t: 0 -> 1). */
 const EASE = {
   inOut: (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2),
   outCubic: (t) => 1 - Math.pow(1 - t, 3),
   outQuart: (t) => 1 - Math.pow(1 - t, 4),
   outExpo: (t) => (t >= 1 ? 1 : 1 - Math.pow(2, -10 * t)),
-  outBack: (s) => (t) => 1 + (s + 1) * Math.pow(t - 1, 3) + s * Math.pow(t - 1, 2),   // vượt quá đích rồi về (nảy)
+  outBack: (s) => (t) => 1 + (s + 1) * Math.pow(t - 1, 3) + s * Math.pow(t - 1, 2),
   outElastic: (t) => t <= 0 ? 0 : t >= 1 ? 1 : Math.pow(2, -9 * t) * Math.sin((t * 10 - 0.75) * ((2 * Math.PI) / 3)) + 1
 };
 
-/** Lấy mẫu đường cong thành keyframe dày (mỗi khung hình 1 điểm) -> CapCut nội suy thẳng giữa các điểm vẫn mượt. */
 function easeKeys(from, to, dur, fps, fn) {
   const f = fn || EASE.inOut;
   const n = Math.max(2, Math.round(dur * (fps || 30)));
@@ -206,11 +237,11 @@ function easeKeys(from, to, dur, fps, fn) {
   return out;
 }
 
-/*
- * Các kiểu hiện chữ (tham khảo clip "text animation"). Toạ độ CapCut: x, y chuẩn hoá theo nửa khung, y hướng lên.
- * CapCut không có keyframe làm nhoè -> mô phỏng bằng độ mờ + vị trí + tỉ lệ với đường cong phù hợp.
- */
 const ANIMS = {
+  none: {
+    label: 'Cắt gọn (kiểu Phim)', dur: 0,
+    kf: () => ({})
+  },
   fade: {
     label: 'Mờ + trượt trái', dur: 0.32,
     kf: (c) => ({ alpha: easeKeys(0, 1, 0.32, c.fps), x: easeKeys(c.x - 22 / (c.W / 2), c.x, 0.32, c.fps) })
@@ -271,17 +302,12 @@ const ANIMS = {
 };
 const ANIM_LIST = [{ id: 'auto', label: 'Tự động (đa dạng)' }].concat(Object.keys(ANIMS).map((id) => ({ id, label: ANIMS[id].label })));
 
-/** Chế độ "Tự động": cụm có từ nhấn dùng kiểu mạnh, cụm thường dùng kiểu nhẹ, xen kẽ để không đơn điệu. */
 const AUTO_STRONG = ['pop', 'elastic', 'drop', 'slam', 'whip', 'pulse'];
 const AUTO_SOFT = ['fade', 'float', 'rise', 'wave'];
 function autoAnim(g, gi) {
   return g.span ? AUTO_STRONG[gi % AUTO_STRONG.length] : AUTO_SOFT[gi % AUTO_SOFT.length];
 }
 
-/**
- * Thuộc tính thực của 1 cụm = mặc định (o) + tuỳ chỉnh riêng g.custom:
- *   { styles: { base: {font, color}, ... }, scale, yPos, anim }
- */
 function groupOpts(o, g, gi) {
   const c = g.custom || {};
   const styles = {};
@@ -298,7 +324,6 @@ function groupOpts(o, g, gi) {
   });
 }
 
-/** CapCut tự đẩy đoạn chồng thời gian sang track mới -> cắt đuôi đoạn trước cho khít đoạn sau trên cùng lane. */
 function noOverlap(segs) {
   const byLane = {};
   segs.forEach((s) => { (byLane[s.lane] = byLane[s.lane] || []).push(s); });
@@ -308,17 +333,15 @@ function noOverlap(segs) {
     list.forEach((s, i) => {
       const next = list[i + 1];
       if (next && s.end > next.start - 0.002) s.end = next.start - 0.002;
-      if (s.end - s.start < 0.1) return;                       // quá ngắn để hiện -> bỏ
+      if (s.end - s.start < 0.1) return;
       if (s.anim) s.anim.duration = Math.min(s.anim.duration, s.end - s.start);
       if (s.keyframes) {
-        // Từ hiện quá ngắn so với animation -> co animation cho vừa (85% thời gian hiện) thay vì cắt cụt giữa chừng.
         const maxT = Math.max(0, ...Object.values(s.keyframes).map((ks) => (ks.length ? ks[ks.length - 1][0] : 0)));
         const room = (s.end - s.start) * 0.85;
         const f = maxT > room ? room / maxT : 1;
         Object.keys(s.keyframes).forEach((k) => { s.keyframes[k] = s.keyframes[k].map(([t, v]) => [t * f, v]); });
         if (s.inDur) s.inDur *= f;
       }
-      // Mờ dần khi cụm kết thúc (ease in-out) thay vì tắt đột ngột.
       const d = s.end - s.start;
       if (s.fadeOut && s.keyframes && s.keyframes.alpha && d > (s.inDur || IN_DUR) + OUT_DUR + 0.02) {
         s.keyframes.alpha = s.keyframes.alpha.concat(easeKeys(1, 0, OUT_DUR, s.fps).map(([t, v]) => [d - OUT_DUR + t, v]));
@@ -330,7 +353,64 @@ function noOverlap(segs) {
   return out.sort((a, b) => a.start - b.start);
 }
 
-/** Phụ đề thường (chức năng 1) ở đáy khung, 1 lane riêng. */
+/** Chế độ Sub Phim Ngang: 1 cue = 1 khối phụ đề ngang căn giữa, hỗ trợ 1-2 dòng, viền & hộp nền kiểu phim/Netflix. */
+function buildMovieSegments(cues, o) {
+  o = Object.assign({ width: 1080, height: 1920, yPos: 0.86, scale: 1, shadow: true, anim: 'none', fps: 30 }, o);
+  const W = o.width, H = o.height;
+  const unitPx = Math.min(W, H) / 216;
+  const st = styleOf('base', o);
+  const file = st.font || fontPath(STYLE.base.file, o.fontsDir);
+  const basePx = (W > H ? 52 : 48) * (o.scale || 1);
+  const maxW = W * 0.86;
+  const yN = +(-(H * o.yPos - H / 2) / (H / 2)).toFixed(4);
+  const animKind = o.movieAnim || (o.anim === 'none' || o.anim === 'fade' || o.anim === 'rise' || o.anim === 'float' ? o.anim : 'none');
+
+  return noOverlap((cues || []).map((c) => {
+    const rawLines = String(c.text || '').split('\n').map((s) => s.trim()).filter(Boolean);
+    const text = rawLines.join('\n');
+    let px = basePx;
+    rawLines.forEach((ln) => {
+      const w = ttf.measure(file, ln, px);
+      if (w > maxW) px = Math.min(px, px * (maxW / w));
+    });
+    const dur = Math.max(0.2, c.end - c.start);
+    let keyframes = null;
+    if (animKind === 'fade') {
+      const fd = Math.min(0.22, dur * 0.3);
+      keyframes = { alpha: easeKeys(0, 1, fd, o.fps, EASE.outCubic) };
+    } else if (animKind === 'rise' || animKind === 'float') {
+      const fd = Math.min(0.28, dur * 0.35);
+      keyframes = {
+        alpha: easeKeys(0, 1, fd, o.fps, EASE.outCubic),
+        y: easeKeys(yN - (px * 0.35) / (H / 2), yN, fd, o.fps, EASE.outCubic)
+      };
+    }
+    return {
+      lane: 'MovieSub',
+      isMovieSub: true,
+      text,
+      font: file,
+      size: +(px / unitPx).toFixed(2),
+      color: st.color,
+      start: c.start,
+      end: c.end,
+      x: 0,
+      y: yN,
+      lineMaxWidth: 0.86,
+      shadow: o.shadow !== false ? (typeof o.shadow === 'object' ? o.shadow : true) : false,
+      border: o.border || null,
+      bg: o.bg || null,
+      glow: null,
+      anim: null,
+      fadeOut: animKind !== 'none',
+      fps: o.fps,
+      inDur: 0.2,
+      keyframes
+    };
+  }));
+}
+
+/** Phụ đề thường (tùy chọn phụ đi kèm ở đáy khung). */
 function buildCaptionSegments(cues, o) {
   o = Object.assign({ width: 1080, height: 1920, yPos: 0.86, px: 46 }, o);
   const unitPx = Math.min(o.width, o.height) / 216;
@@ -347,4 +427,16 @@ function buildCaptionSegments(cues, o) {
   }));
 }
 
-module.exports = { buildSegments, buildCaptionSegments, easeKeys, styleOf, groupOpts, ANIMS, ANIM_LIST, STYLE, PRESETS, fontPath };
+module.exports = {
+  buildSegments,
+  buildMovieSegments,
+  buildCaptionSegments,
+  easeKeys,
+  styleOf,
+  groupOpts,
+  ANIMS,
+  ANIM_LIST,
+  STYLE,
+  PRESETS,
+  fontPath
+};

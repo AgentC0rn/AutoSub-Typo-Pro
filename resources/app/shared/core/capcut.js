@@ -607,6 +607,71 @@ function buildKeyframes(kf) {
   }));
 }
 
+function hexToRgb01(hex) {
+  const m = String(hex || '#000000').trim().match(/^#?([0-9a-f]{6})/i);
+  if (!m) return [0, 0, 0];
+  return [0, 2, 4].map((i) => parseInt(m[1].slice(i, i + 2), 16) / 255);
+}
+
+function touchDraftMeta(draftDir) {
+  const nowUs = Date.now() * 1000;
+  const metaFile = path.join(draftDir, 'draft_meta_info.json');
+  if (fs.existsSync(metaFile)) {
+    try {
+      const meta = readJson(metaFile);
+      meta.tm_draft_modified = nowUs;
+      writeJson(metaFile, meta);
+    } catch (e) {}
+  }
+  const parentRoot = path.dirname(path.resolve(draftDir));
+  const roots = [parentRoot, defaultDraftsRoot()];
+  const seen = new Set();
+  for (const r of roots) {
+    const key = path.resolve(r).toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const rootFile = path.join(r, 'root_meta_info.json');
+    if (!fs.existsSync(rootFile)) continue;
+    try {
+      const rm = readJson(rootFile);
+      const entry = (rm.all_draft_store || []).find((d) => d.draft_fold_path && path.resolve(d.draft_fold_path).toLowerCase() === path.resolve(draftDir).toLowerCase());
+      if (entry) {
+        entry.tm_draft_modified = nowUs;
+        rm.all_draft_store = [entry].concat((rm.all_draft_store || []).filter((d) => d !== entry));
+        writeJson(rootFile, rm);
+      }
+    } catch (e) {}
+  }
+}
+
+function removeTracksByNames(c, names) {
+  if (!Array.isArray(c.tracks) || !names || !names.length) return;
+  const nameSet = new Set(names.map((n) => String(n).toLowerCase()));
+  const removedSegs = [];
+  c.tracks = c.tracks.filter((t) => {
+    const tName = String(t && t.name || '').toLowerCase();
+    const match = t && t.type === 'text' && (nameSet.has(tName) || [...nameSet].some((p) => tName === p || tName.startsWith(p + ' ')));
+    if (match && Array.isArray(t.segments)) removedSegs.push(...t.segments);
+    return !match;
+  });
+  if (!removedSegs.length) return;
+  const stillMat = new Set();
+  const stillExtra = new Set();
+  for (const t of c.tracks) {
+    for (const s of (t.segments || [])) {
+      if (s.material_id) stillMat.add(s.material_id);
+      for (const eid of (s.extra_material_refs || [])) stillExtra.add(eid);
+    }
+  }
+  const dropMat = new Set(removedSegs.map((s) => s.material_id).filter((id) => id && !stillMat.has(id)));
+  const dropExtra = new Set(removedSegs.flatMap((s) => s.extra_material_refs || []).filter((id) => id && !stillExtra.has(id)));
+  if (c.materials) {
+    if (Array.isArray(c.materials.texts)) c.materials.texts = c.materials.texts.filter((m) => !dropMat.has(m.id));
+    if (Array.isArray(c.materials.material_animations)) c.materials.material_animations = c.materials.material_animations.filter((m) => !dropExtra.has(m.id));
+    if (Array.isArray(c.materials.effects)) c.materials.effects = c.materials.effects.filter((m) => !dropExtra.has(m.id));
+  }
+}
+
 /*
  * Ghi 1 track chữ vào timeline (hỗ trợ cả Timelines/<main_id>/draft_content.json và root draft_content.json).
  */
@@ -620,6 +685,11 @@ function addTextTrack(draftDir, segs, opts) {
   c.materials.texts = c.materials.texts || [];
   c.materials.material_animations = c.materials.material_animations || [];
   c.materials.effects = c.materials.effects || [];
+
+  if (opts.replace) {
+    const names = Array.isArray(opts.replaceNames) && opts.replaceNames.length ? opts.replaceNames : [opts.name || 'AutoSub'];
+    removeTracksByNames(c, names);
+  }
 
   const maxIdx = Math.max(14000, ...(c.tracks || []).flatMap((t) => (t.segments || []).map((s) => s.render_index || 0)));
   const textTracksBefore = (c.tracks || []).filter((t) => t.type === 'text').length;
@@ -639,10 +709,41 @@ function addTextTrack(draftDir, segs, opts) {
       range: [0, len],
       size: s.size
     };
-    if (s.shadow) {
-      style.shadows = [{ thickness_projection_angle: -90, thickness_projection_enable: false, diffuse: 0.12, alpha: 0.6,
-        distance: 4, content: { render_type: 'solid', solid: { color: [0, 0, 0] } }, angle: -90, thickness_projection_distance: 0 }];
+    const shObj = s.shadow && typeof s.shadow === 'object' ? s.shadow : null;
+    const hasShadow = !!s.shadow;
+    const sAlpha = shObj && shObj.alpha !== undefined ? shObj.alpha : 0.65;
+    const sDist = shObj && shObj.distance !== undefined ? shObj.distance : 4;
+    const sSmooth = shObj && shObj.smoothing !== undefined ? shObj.smoothing : 0.6;
+    const sColor = (shObj && shObj.color) || '#000000';
+    if (hasShadow) {
+      style.shadows = [{
+        thickness_projection_angle: -90,
+        thickness_projection_enable: false,
+        diffuse: +(Math.max(0.02, sSmooth * 0.2)).toFixed(3),
+        alpha: sAlpha,
+        distance: sDist,
+        content: { render_type: 'solid', solid: { color: hexToRgb01(sColor) } },
+        angle: -90,
+        thickness_projection_distance: 0
+      }];
     }
+    let checkFlag = 7;
+    const hasBorder = !!(s.border && (s.border.width || s.border.color));
+    if (hasBorder) {
+      const bColor = s.border.color || '#000000';
+      const bWidth = s.border.width || 0.08;
+      style.strokes = [{
+        content: { render_type: 'solid', solid: { color: hexToRgb01(bColor) } },
+        width: bWidth,
+        mode: 0
+      }];
+      checkFlag |= 40;
+    }
+    const hasBg = !!(s.bg && s.bg.alpha > 0);
+    if (hasBg) {
+      checkFlag |= 16;
+    }
+
     const mat = JSON.parse(JSON.stringify(tMat));
     Object.assign(mat, {
       id: uuid(),
@@ -650,8 +751,19 @@ function addTextTrack(draftDir, segs, opts) {
       font_path: fwd(s.font), font_size: s.size, font_name: '', font_title: 'none', font_id: '', font_resource_id: '',
       text_color: '#' + (s.color || [1, 1, 1]).map((v) => Math.round(v * 255).toString(16).padStart(2, '0')).join('').toUpperCase(),
       letter_spacing: s.letterSpacing || 0,
-      has_shadow: !!s.shadow, shadow_color: s.shadow ? '#000000' : '', shadow_alpha: 0.6, shadow_distance: 4, shadow_angle: -90, shadow_smoothing: 0.6,
-      line_max_width: 1.0, alignment: 1, typesetting: 0, is_rich_text: false, fonts: [], check_flag: 7,
+      has_shadow: hasShadow, shadow_color: hasShadow ? sColor : '', shadow_alpha: sAlpha, shadow_distance: sDist, shadow_angle: -90, shadow_smoothing: sSmooth,
+      has_border: hasBorder,
+      border_color: hasBorder ? (s.border.color || '#000000') : '',
+      border_width: hasBorder ? (s.border.width || 0.08) : 0.08,
+      border_alpha: hasBorder && s.border.alpha !== undefined ? s.border.alpha : 1.0,
+      has_text_shadow_config: hasBg,
+      background_color: hasBg ? (s.bg.color || '#000000') : '',
+      background_alpha: hasBg ? (s.bg.alpha !== undefined ? s.bg.alpha : 0.62) : 1.0,
+      background_style: hasBg ? (s.bg.style !== undefined ? s.bg.style : 1) : 0,
+      background_round_radius: hasBg ? (s.bg.round !== undefined ? s.bg.round : 0.35) : 0.0,
+      background_width: 0.14,
+      background_height: 0.14,
+      line_max_width: s.lineMaxWidth || 1.0, alignment: 1, typesetting: 0, is_rich_text: false, fonts: [], check_flag: checkFlag,
       words: { start_time: [], end_time: [], text: [] }, current_words: { start_time: [], end_time: [], text: [] }
     });
     c.materials.texts.push(mat);
@@ -702,6 +814,7 @@ function addTextTrack(draftDir, segs, opts) {
     if (!fs.existsSync(f + '.autosub.bak')) fs.copyFileSync(f, f + '.autosub.bak');
     writeJson(f, c);
   });
+  if (opts.touchMeta !== false) touchDraftMeta(draftDir);
   cleanTemp(draftDir);
   return all.length;
 }
@@ -715,6 +828,7 @@ module.exports = {
   cloneDraft,
   removeDraft,
   addTextTrack,
+  touchDraftMeta,
   contentFiles,
   listTimelines,
   timelineCount,

@@ -30,7 +30,10 @@ const state = {
   canvas: { width: 1080, height: 1920, fps: 30 },
   words: [],
   groups: [],
+  movieCues: [],
   segs: [],
+  mode: 'typo',
+  effectStyle: { border: null, bg: null, shadow: true },
   shown: null,
   masterWavPath: null,
   masterAudioUrl: null,
@@ -74,16 +77,24 @@ function refreshButtons() {
   const tools = toolState();
   const ready = !!(tools.whisper && tools.ffmpeg && tools.model);
   const hasVoiceSegs = selectedAudioSegments().length > 0;
+  const hasContent = state.mode === 'movie' ? state.movieCues.length > 0 : state.groups.length > 0;
   $('#btn-listen').disabled = busyFlag || !state.draft || !ready || !hasVoiceSegs;
   $('#btn-layout').disabled = busyFlag || !state.words.length;
-  $('#btn-write').disabled = busyFlag || !state.groups.length;
+  $('#btn-write').disabled = busyFlag || !hasContent;
   $('#btn-setup').disabled = busyFlag;
   const hasTracks = (state.tracks || []).some((t) => t.audibleCount > 0);
   $('#btn-tracks-voice').disabled = busyFlag || !hasTracks;
   $('#btn-tracks-all').disabled = busyFlag || !hasTracks;
   document.querySelectorAll('.tl-chip').forEach((b) => { b.disabled = busyFlag; });
   const split = $('#btn-split-playhead');
-  if (split) split.disabled = busyFlag || !state.groups.length;
+  if (split) {
+    split.hidden = state.mode === 'movie';
+    split.disabled = busyFlag || state.mode === 'movie' || !state.groups.length;
+  }
+  const glowWrap = $('#opt-glow-wrap');
+  const subWrap = $('#opt-sub-wrap');
+  if (glowWrap) glowWrap.hidden = state.mode === 'movie';
+  if (subWrap) subWrap.hidden = state.mode === 'movie';
 }
 const settings = (() => { try { return JSON.parse(localStorage.getItem('autosub-cc') || '{}'); } catch (e) { return {}; } })();
 function save() { try { localStorage.setItem('autosub-cc', JSON.stringify(settings)); } catch (e) {} }
@@ -142,8 +153,13 @@ function updateMetrics() {
   }
 
   if (state.words.length) {
-    $('#metric-typo-value').textContent = `${state.words.length} từ · ${state.groups.length} cụm`;
-    $('#metric-typo-sub').textContent = state.masterAudioUrl ? 'Đang phát từ Master WAV 16kHz' : 'Đã dựng layout typography';
+    const countText = state.mode === 'movie'
+      ? `${state.words.length} từ · ${state.movieCues.length} dòng sub`
+      : `${state.words.length} từ · ${state.groups.length} cụm`;
+    $('#metric-typo-value').textContent = countText;
+    $('#metric-typo-sub').textContent = state.masterAudioUrl
+      ? (state.mode === 'movie' ? 'Chế độ Sub Phim Ngang · Audio 16kHz' : 'Đang phát từ Master WAV 16kHz')
+      : 'Đã dựng layout chữ';
   } else {
     $('#metric-typo-value').textContent = gpu ? 'Whisper CUDA Ready' : 'Whisper CPU Ready';
     $('#metric-typo-sub').textContent = s.model ? path.basename(s.model) : 'Chờ nạp model';
@@ -317,6 +333,7 @@ function stashTimeline() {
     canvas: Object.assign({}, state.canvas),
     words: state.words,
     groups: state.groups,
+    movieCues: state.movieCues,
     trackSel: sel,
     sel: state.sel
   });
@@ -362,7 +379,7 @@ function renderTimelines() {
   const otherDone = done.filter((c) => (c.timelineId || null) !== (state.timelineId || null)).length;
   const total = otherDone + (curDone ? 1 : 0);
   $('#opt-all-tl-wrap').hidden = total < 2;
-  $('#opt-all-tl-label').textContent = `Ghi cả ${total} timeline đã nhận dạng vào cùng 1 bản sao`;
+  $('#opt-all-tl-label').textContent = `Ghi cả ${total} timeline đã nhận dạng vào project hiện tại`;
 }
 
 function selectDraft(d, timelineId) {
@@ -398,6 +415,7 @@ function selectDraft(d, timelineId) {
     state.canvas = analysis.canvas;
     state.words = [];
     state.groups = [];
+    state.movieCues = [];
     state.segs = [];
     state.sel = null;
     state.playTime = 0;
@@ -411,6 +429,7 @@ function selectDraft(d, timelineId) {
       state.tracks.forEach((t) => { if (cache.trackSel[trackKey(t)] !== undefined) t.selected = cache.trackSel[trackKey(t)] && t.audibleCount > 0; });
       state.words = cache.words || [];
       state.groups = cache.groups || [];
+      state.movieCues = cache.movieCues || (state.words.length ? SRT.groupMovieCues(state.words, state.canvas) : []);
       state.sel = state.groups.some((g) => g.id === cache.sel) ? cache.sel : null;
     }
 
@@ -689,11 +708,55 @@ const fontHasVi = (file) => {
   return viCache.get(file);
 };
 
-/* ---------- 4. Thuộc tính Typography ---------- */
+/* ---------- 4. Thuộc tính Typography & Sub Phim Ngang ---------- */
+state.mode = settings.mode === 'movie' ? 'movie' : 'typo';
+state.effectStyle = (settings.effectStyle && typeof settings.effectStyle === 'object')
+  ? settings.effectStyle
+  : { border: null, bg: null, shadow: true };
 state.sel = null;
-state.global = { anim: settings.anim || 'auto', scale: settings.scale || 100, yPos: settings.ypos || 72 };
-const selGroup = () => state.groups.find((g) => g.id === state.sel) || null;
+state.global = {
+  anim: settings.anim || 'auto',
+  movieAnim: settings.movieAnim || 'none',
+  scale: settings.scale || 100,
+  yPos: settings.yposTypo || settings.ypos || 72,
+  movieYPos: settings.yposMovie || 86
+};
+const activeYPos = () => (state.mode === 'movie' ? state.global.movieYPos : state.global.yPos);
+const activeAnim = () => (state.mode === 'movie' ? state.global.movieAnim : state.global.anim);
+const selGroup = () => (state.mode === 'movie' ? null : (state.groups.find((g) => g.id === state.sel) || null));
 const groupIndex = (g) => state.groups.indexOf(g) + 1;
+
+function saveEffectStyle() {
+  settings.effectStyle = state.effectStyle;
+  save();
+}
+
+function setMode(nextMode) {
+  state.mode = nextMode === 'movie' ? 'movie' : 'typo';
+  settings.mode = state.mode;
+  save();
+  if (state.mode === 'movie') state.sel = null;
+  if (state.words.length && !state.movieCues.length) {
+    state.movieCues = SRT.groupMovieCues(state.words, state.canvas);
+  }
+  const bTypo = $('#mode-typo'), bMovie = $('#mode-movie');
+  if (bTypo) bTypo.classList.toggle('sel', state.mode === 'typo');
+  if (bMovie) bMovie.classList.toggle('sel', state.mode === 'movie');
+  const subTitle = $('#groups-sub');
+  if (subTitle) {
+    subTitle.firstChild.textContent = state.mode === 'movie' ? 'Các câu phụ đề ngang ' : 'Các cụm chữ ';
+  }
+  const hint = $('#groups-hint');
+  if (hint) {
+    hint.textContent = state.mode === 'movie'
+      ? '(chế độ Sub Phim Ngang: mỗi câu là 1 dòng ngang 1–2 hàng ở đáy khung kiểu phim/Netflix · bấm câu để xem thử)'
+      : '(bấm cụm = sửa riêng · bấm từ = bật/tắt nhấn · Shift+bấm = nối từ · bấm nhãn = đổi kiểu · ✂ giữa 2 từ hoặc Alt+bấm từ = tách cụm · ⤓ Gộp = nối với cụm sau · Ctrl+B = tách tại đầu phát)';
+  }
+  renderInspector();
+  renderGroups();
+  rebuildSegs();
+  updateMetrics();
+}
 
 function effStyle(k) {
   const g = selGroup();
@@ -734,40 +797,44 @@ function afterEdit(replay) {
 
 function renderInspector() {
   const g = selGroup();
+  const isMovie = state.mode === 'movie';
   $('#inspector').classList.toggle('editing', !!g);
-  $('#insp-target').textContent = g
-    ? `Đang sửa: Cụm #${groupIndex(g)} · ${fmt(g.start)}–${fmt(g.end)}`
-    : 'Mặc định cho mọi cụm';
-  $('#insp-hint').textContent = g
-    ? 'Thay đổi ở đây chỉ áp cho cụm đang chọn. Bấm "← Mặc định chung" để sửa cho tất cả.'
-    : 'Bấm vào 1 cụm ở mục 3 để sửa riêng cụm đó.';
+  $('#insp-target').textContent = isMovie
+    ? 'Chế độ Sub Phim Ngang'
+    : (g ? `Đang sửa: Cụm #${groupIndex(g)} · ${fmt(g.start)}–${fmt(g.end)}` : 'Mặc định cho mọi cụm');
+  $('#insp-hint').textContent = isMovie
+    ? 'Cỡ chữ, vị trí đáy, bộ phối viền/nền và kiểu hiện chữ cho phụ đề phim ngang.'
+    : (g ? 'Thay đổi ở đây chỉ áp cho cụm đang chọn. Bấm "← Mặc định chung" để sửa cho tất cả.' : 'Bấm vào 1 cụm ở mục 3 để sửa riêng cụm đó.');
   $('#insp-replay').hidden = !g;
   $('#insp-deselect').hidden = !g;
   $('#insp-clear').hidden = !(g && g.custom);
 
   const grid = $('#insp-anim');
   grid.innerHTML = '';
-  const opts = (g ? [{ id: 'inherit', label: 'Theo mặc định' }] : []).concat(typo.ANIM_LIST);
-  const active = g ? ((g.custom && g.custom.anim) || 'inherit') : state.global.anim;
+  const movieAnims = ['none', 'fade', 'float', 'rise'].map((id) => ({ id, label: typo.ANIMS[id].label }));
+  const opts = isMovie ? movieAnims : ((g ? [{ id: 'inherit', label: 'Theo mặc định' }] : []).concat(typo.ANIM_LIST));
+  const active = isMovie ? state.global.movieAnim : (g ? ((g.custom && g.custom.anim) || 'inherit') : state.global.anim);
   opts.forEach((a) => {
     const b = document.createElement('button');
     b.className = 'anim-btn' + (a.id === active ? ' sel' : '');
-    const demo = a.id === 'auto' ? '✦' : a.id === 'inherit' ? '↺' : 'Aa';
+    const demo = a.id === 'auto' ? '✦' : a.id === 'inherit' ? '↺' : a.id === 'none' ? '▬' : 'Aa';
     b.innerHTML = `<span class="demo a-${a.id}"><b>${demo}</b></span><span></span>`;
     b.lastChild.textContent = a.label;
     b.addEventListener('click', () => {
-      if (g) {
+      if (isMovie) {
+        state.global.movieAnim = a.id; settings.movieAnim = a.id; save();
+      } else if (g) {
         g.custom = g.custom || {};
         if (a.id === 'inherit') delete g.custom.anim; else g.custom.anim = a.id;
       } else { state.global.anim = a.id; settings.anim = a.id; save(); }
       afterEdit(true);
-      if (!g) log(`Animation mặc định: ${a.label}`);
+      if (!g) log(`Animation ${isMovie ? 'Sub Phim' : 'mặc định'}: ${a.label}`);
     });
     grid.appendChild(b);
   });
 
   const sc = g && g.custom && g.custom.scale ? Math.round(g.custom.scale * 100) : state.global.scale;
-  const yp = g && g.custom && g.custom.yPos ? Math.round(g.custom.yPos * 100) : state.global.yPos;
+  const yp = g && g.custom && g.custom.yPos ? Math.round(g.custom.yPos * 100) : activeYPos();
   $('#insp-scale').value = sc; $('#insp-scale-v').textContent = sc + '%';
   $('#insp-ypos').value = yp; $('#insp-ypos-v').textContent = yp + '%';
 
@@ -832,6 +899,12 @@ function applyPreset(preset) {
       const p = preset.styles[k];
       state.styles[k] = { font: typo.fontPath(p.file, FONTS), color: p.color };
     });
+    state.effectStyle = {
+      border: preset.border ? Object.assign({}, preset.border) : null,
+      bg: preset.bg ? Object.assign({}, preset.bg) : null,
+      shadow: preset.shadow !== undefined ? preset.shadow : true
+    };
+    saveEffectStyle();
     onStylesChanged();
     log(`Đã áp dụng bộ phối "${preset.name}" cho toàn bộ dự án.`, 'ok');
   }
@@ -847,11 +920,17 @@ function renderPresets() {
     blue: effStyle('blue'),
     gold: effStyle('gold')
   };
+  const normJson = (v) => JSON.stringify(v || null);
   typo.PRESETS.forEach((preset) => {
-    const isMatch = ['base', 'script', 'blue', 'gold'].every((k) =>
+    const fontsMatch = ['base', 'script', 'blue', 'gold'].every((k) =>
       path.basename(cur[k].font).toLowerCase() === preset.styles[k].file.toLowerCase() &&
       cur[k].color.toLowerCase() === preset.styles[k].color.toLowerCase()
     );
+    const fxMatch = selGroup() || (
+      normJson(state.effectStyle.border) === normJson(preset.border || null) &&
+      normJson(state.effectStyle.bg) === normJson(preset.bg || null)
+    );
+    const isMatch = fontsMatch && fxMatch;
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'preset-btn' + (isMatch ? ' sel' : '');
@@ -865,6 +944,13 @@ function renderPresets() {
       dot.style.background = preset.styles[k].color;
       dots.appendChild(dot);
     });
+    const tagText = preset.bg ? 'Hộp nền tối' : preset.border ? 'Viền nét chữ' : (preset.movieDefault ? 'Chuẩn phim' : '');
+    if (tagText) {
+      const tag = document.createElement('span');
+      tag.className = 'preset-tag';
+      tag.textContent = tagText;
+      btn.appendChild(tag);
+    }
     btn.addEventListener('click', () => applyPreset(preset));
     grid.appendChild(btn);
   });
@@ -973,13 +1059,18 @@ function layoutOpts() {
 function buildTypo() {
   if (!state.words.length) return;
   state.groups = Layout.buildLayout(state.words, layoutOpts());
+  state.movieCues = SRT.groupMovieCues(state.words, state.canvas);
   state.sel = null;
   rebuildSegs();
   renderGroups();
   renderInspector();
   updateMetrics();
   renderTimelines();
-  log(`Dàn ${state.groups.length} cụm chữ, ${state.groups.filter((g) => g.span).length} cụm có từ nhấn.`);
+  if (state.mode === 'movie') {
+    log(`Dàn ${state.movieCues.length} câu Sub Phim Ngang.`);
+  } else {
+    log(`Dàn ${state.groups.length} cụm chữ, ${state.groups.filter((g) => g.span).length} cụm có từ nhấn.`);
+  }
 }
 
 /* ---------- Tách / Gộp cụm chữ sau khi nhận dạng ---------- */
@@ -1023,19 +1114,30 @@ function splitAtPlayhead() {
   log(`✂ Tách tại đầu phát ${fmt(t)} → "${res[0].words.map((w) => w.text).join(' ')}" | "${res[1].words.map((w) => w.text).join(' ')}"`, 'ok');
   afterStructureEdit(res[1].id, false);
 }
-function typoOpts(canvas) {
+function typoOpts(canvas, modeOverride) {
   const cv = canvas || state.canvas;
+  const m = modeOverride || state.mode;
+  const fx = state.effectStyle || {};
   return {
     width: cv.width, height: cv.height, fps: cv.fps, fontsDir: FONTS,
     scale: state.global.scale / 100,
-    yPos: state.global.yPos / 100,
-    anim: state.global.anim,
+    yPos: (m === 'movie' ? state.global.movieYPos : state.global.yPos) / 100,
+    anim: m === 'movie' ? state.global.movieAnim : state.global.anim,
+    movieAnim: state.global.movieAnim,
     glow: $('#opt-glow').checked,
+    border: fx.border || null,
+    bg: fx.bg || null,
+    shadow: fx.shadow !== undefined ? fx.shadow : true,
     styles: styleOpts()
   };
 }
 function rebuildSegs() {
-  state.segs = state.groups.length ? typo.buildSegments(state.groups, typoOpts()) : [];
+  if (state.mode === 'movie') {
+    if (!state.movieCues.length && state.words.length) state.movieCues = SRT.groupMovieCues(state.words, state.canvas);
+    state.segs = state.movieCues.length ? typo.buildMovieSegments(state.movieCues, typoOpts(null, 'movie')) : [];
+  } else {
+    state.segs = state.groups.length ? typo.buildSegments(state.groups, typoOpts(null, 'typo')) : [];
+  }
   state.shown = null;
   drawStage(currentTime());
   refreshButtons();
@@ -1063,6 +1165,31 @@ function styleTag(style, color, clickable) {
 function renderGroups() {
   const box = $('#groups');
   box.innerHTML = '';
+  if (state.mode === 'movie') {
+    if (!state.movieCues.length && state.words.length) state.movieCues = SRT.groupMovieCues(state.words, state.canvas);
+    state.movieCues.forEach((c, ci) => {
+      const el = document.createElement('div');
+      el.className = 'grp';
+      el.dataset.id = 'm' + ci;
+      el.title = 'Bấm để xem thử câu phụ đề này';
+      el.addEventListener('click', () => playGroup(c));
+      const head = document.createElement('div');
+      head.className = 'grp-h';
+      const time = document.createElement('span');
+      time.textContent = `#${ci + 1} · ${fmt(c.start)} – ${fmt(c.end)}`;
+      const tag = document.createElement('span');
+      tag.className = 'stag';
+      tag.style.color = '#a5f3fc';
+      tag.textContent = 'Sub ngang';
+      head.append(time, tag);
+      const txt = document.createElement('div');
+      txt.className = 'movie-cue-txt';
+      txt.textContent = c.text;
+      el.append(head, txt);
+      box.appendChild(el);
+    });
+    return;
+  }
   const lo = layoutOpts();
   const animLabel = (id) => (typo.ANIM_LIST.find((a) => a.id === id) || {}).label || id;
   state.groups.forEach((g, gi) => {
@@ -1179,19 +1306,37 @@ function drawStage(t) {
     host.innerHTML = '';
     active.forEach((s) => {
       const d = document.createElement('div');
-      d.className = 'w';
+      d.className = 'w' + (s.isMovieSub ? ' movie-sub' : '');
       d.textContent = s.text;
       d.style.fontSize = (s.size * unitPx * k) + 'px';
       d.style.fontFamily = `"${familyFor(s.font)}", sans-serif`;
       const rgb = s.color.map((v) => Math.round(v * 255)).join(',');
       d.style.color = `rgb(${rgb})`;
-      d.style.textShadow = (s.glow ? `0 0 .1em rgba(${rgb},.35), ` : '') + '0 .05em .12em rgba(0,0,0,.55)';
+      if (s.border && (s.border.width || s.border.color)) {
+        const px = Math.max(1, Math.round(s.size * unitPx * k * (s.border.width || 0.08) * 1.15));
+        d.style.webkitTextStroke = `${px}px ${s.border.color || '#000000'}`;
+        d.style.paintOrder = 'stroke fill';
+      }
+      if (s.bg && s.bg.alpha > 0) {
+        const bgRgb = rgbOf(s.bg.color || '#000000').map((v) => Math.round(v * 255)).join(',');
+        d.style.background = `rgba(${bgRgb},${s.bg.alpha})`;
+        d.style.padding = '0.2em 0.55em';
+        d.style.borderRadius = ((s.bg.round || 0.35) * 0.9) + 'em';
+      }
+      d.style.textShadow = (s.glow ? `0 0 .1em rgba(${rgb},.35), ` : '') + (s.shadow ? '0 .06em .16em rgba(0,0,0,.72)' : 'none');
       d._seg = s;
       host.appendChild(d);
     });
     state.shown = key;
-    const g = state.groups.find((x) => t >= x.start && t < x.end);
-    document.querySelectorAll('.grp').forEach((el) => el.classList.toggle('active', !!g && el.dataset.id === g.id));
+    let activeId = null;
+    if (state.mode === 'movie') {
+      const ci = state.movieCues.findIndex((x) => t >= x.start && t < x.end);
+      if (ci >= 0) activeId = 'm' + ci;
+    } else {
+      const g = state.groups.find((x) => t >= x.start && t < x.end);
+      if (g) activeId = g.id;
+    }
+    document.querySelectorAll('.grp').forEach((el) => el.classList.toggle('active', !!activeId && el.dataset.id === activeId));
   }
   host.childNodes.forEach((d) => {
     const s = d._seg, lt = t - s.start;
@@ -1383,28 +1528,41 @@ async function writeToCapCut() {
       const order = (c) => { const i = state.timelines.findIndex((t) => (t.id || null) === (c.timelineId || null)); return i < 0 ? 999 : i; };
       jobs.sort((a, b) => order(a) - order(b));
     }
-    jobs = jobs.filter((j) => j && j.groups && j.groups.length);
-    if (!jobs.length) throw new Error('Chưa có cụm chữ nào để ghi.');
+    const isMovie = state.mode === 'movie';
+    jobs = jobs.filter((j) => j && (isMovie ? ((j.movieCues && j.movieCues.length) || (j.words && j.words.length)) : (j.groups && j.groups.length)));
+    if (!jobs.length) throw new Error(isMovie ? 'Chưa có câu phụ đề nào để ghi.' : 'Chưa có cụm chữ nào để ghi.');
 
-    const dest = cc.cloneDraft(state.draft.dir, `${state.draft.name} - AutoSub`);
+    const dest = state.draft.dir;
+    const replaceOld = $('#opt-replace') ? $('#opt-replace').checked : true;
+    const replaceNames = ['AutoSub Typo', 'AutoSub Sub Phim', 'AutoSub Phụ đề'];
     const multi = state.timelines.length > 1;
     const summary = [];
     let totalSegs = 0, totalCaps = 0;
     for (const job of jobs) {
-      const segs = typo.buildSegments(job.groups, typoOpts(job.canvas));
-      const caps = $('#opt-sub').checked
-        ? typo.buildCaptionSegments(SRT.groupCues(job.words), { width: job.canvas.width, height: job.canvas.height, fontsDir: FONTS })
-        : [];
-      cc.addTextTrack(dest, segs, { name: 'Typo', timelineId: job.timelineId });
-      if (caps.length) cc.addTextTrack(dest, caps, { name: 'Phụ đề', timelineId: job.timelineId });
-      totalSegs += segs.length;
-      totalCaps += caps.length;
-      summary.push(`${job.name}: ${segs.length} đoạn chữ${caps.length ? ` + ${caps.length} phụ đề` : ''}`);
+      if (isMovie) {
+        const cues = (job.movieCues && job.movieCues.length) ? job.movieCues : SRT.groupMovieCues(job.words, job.canvas);
+        const segs = typo.buildMovieSegments(cues, typoOpts(job.canvas, 'movie'));
+        cc.addTextTrack(dest, segs, { name: 'AutoSub Sub Phim', timelineId: job.timelineId, replace: replaceOld, replaceNames });
+        totalSegs += segs.length;
+        summary.push(`${job.name}: ${segs.length} dòng sub ngang`);
+      } else {
+        const segs = typo.buildSegments(job.groups, typoOpts(job.canvas, 'typo'));
+        const caps = $('#opt-sub').checked
+          ? typo.buildCaptionSegments(SRT.groupCues(job.words), { width: job.canvas.width, height: job.canvas.height, fontsDir: FONTS })
+          : [];
+        cc.addTextTrack(dest, segs, { name: 'AutoSub Typo', timelineId: job.timelineId, replace: replaceOld, replaceNames });
+        if (caps.length) cc.addTextTrack(dest, caps, { name: 'AutoSub Phụ đề', timelineId: job.timelineId, replace: false });
+        totalSegs += segs.length;
+        totalCaps += caps.length;
+        summary.push(`${job.name}: ${segs.length} đoạn chữ${caps.length ? ` + ${caps.length} phụ đề` : ''}`);
+      }
     }
-    const name = path.basename(dest);
+    const name = state.draft.name || path.basename(dest);
     res.className = 'result';
-    res.innerHTML = `Đã tạo project <b></b> với ${totalSegs} đoạn chữ${totalCaps ? ` + ${totalCaps} dòng phụ đề` : ''}.` +
-      (multi ? '<div class="muted small tl-sum"></div>' : '') + ' Mở CapCut và chọn project này.';
+    res.innerHTML = isMovie
+      ? `Đã ghi thẳng vào project <b></b> (${totalSegs} dòng Sub Phim Ngang).` + (multi ? '<div class="muted small tl-sum"></div>' : '') + ' Mở CapCut để xem ngay.'
+      : `Đã ghi thẳng vào project <b></b> với ${totalSegs} đoạn chữ${totalCaps ? ` + ${totalCaps} dòng phụ đề` : ''}.` +
+        (multi ? '<div class="muted small tl-sum"></div>' : '') + ' Mở CapCut để xem ngay.';
     res.querySelector('b').textContent = name;
     if (multi) res.querySelector('.tl-sum').textContent = 'Timeline: ' + summary.join(' · ') + ' (trong CapCut chọn đúng timeline để xem).';
     const btn = document.createElement('button');
@@ -1412,7 +1570,8 @@ async function writeToCapCut() {
     btn.textContent = 'Mở CapCut';
     btn.addEventListener('click', openCapCut);
     res.appendChild(btn);
-    log(`Đã ghi vào project mới "${name}"${multi ? ` — ${summary.join(' · ')}` : ''}.`, 'ok');
+    log(`Đã ghi thẳng vào project "${name}"${multi ? ` — ${summary.join(' · ')}` : ''}.`, 'ok');
+    renderTimelines();
     renderDrafts();
   } catch (e) {
     res.className = 'result warn';
@@ -1662,12 +1821,19 @@ async function init() {
 
   if (settings.lang) $('#lang').value = settings.lang;
   state.styles = loadStyles();
-  renderStyles();
+  setMode(state.mode);
+
+  $('#mode-typo').addEventListener('click', () => setMode('typo'));
+  $('#mode-movie').addEventListener('click', () => setMode('movie'));
 
   $('#btn-styles-reset').addEventListener('click', () => {
     const g = selGroup();
     if (g && g.custom) { delete g.custom.styles; log(`Cụm #${groupIndex(g)}: về font & màu mặc định.`); afterEdit(true); return; }
-    state.styles = defaultStyles(); onStylesChanged(); log('Đã về font & màu gốc của app.');
+    state.styles = defaultStyles();
+    state.effectStyle = { border: null, bg: null, shadow: true };
+    saveEffectStyle();
+    onStylesChanged();
+    log('Đã về font & màu gốc của app.');
   });
 
   const sliderEdit = (id, key, gKey) => {
@@ -1676,12 +1842,18 @@ async function init() {
       $('#insp-' + id + '-v').textContent = el.value + '%';
       const g = selGroup(), v = parseFloat(el.value);
       if (g) { g.custom = g.custom || {}; g.custom[gKey] = v / 100; }
+      else if (id === 'ypos' && state.mode === 'movie') state.global.movieYPos = v;
       else state.global[key] = v;
       rebuildSegs();
     });
     el.addEventListener('change', () => {
       const g = selGroup();
-      if (!g) { settings[id === 'scale' ? 'scale' : 'ypos'] = state.global[key]; save(); }
+      if (!g) {
+        if (id === 'scale') settings.scale = state.global.scale;
+        else if (state.mode === 'movie') settings.yposMovie = state.global.movieYPos;
+        else settings.yposTypo = state.global.yPos;
+        save();
+      }
       afterEdit(true);
     });
   };
