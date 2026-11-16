@@ -8,8 +8,8 @@ $ErrorActionPreference = 'Stop'
 
 $Root = Split-Path -Parent $PSScriptRoot
 $CertsDir = Join-Path $Root 'certs'
-$CerPath = Join-Path $CertsDir 'AutoSubTypoPro.cer'
-$Subject = 'CN=AutoSub Typo Pro, O=She Wellness'
+$CerPath = Join-Path $CertsDir 'AgentC0rn.cer'
+$Subject = 'CN=AgentC0rn'
 
 if (-not (Test-Path $CertsDir)) {
   New-Item -ItemType Directory -Path $CertsDir | Out-Null
@@ -25,7 +25,7 @@ if (-not $cert) {
   $cert = New-SelfSignedCertificate `
     -Type CodeSigningCert `
     -Subject $Subject `
-    -FriendlyName 'AutoSub Typo Pro Internal Code Signing' `
+    -FriendlyName 'AgentC0rn Code Signing' `
     -KeyAlgorithm RSA `
     -KeyLength 2048 `
     -HashAlgorithm SHA256 `

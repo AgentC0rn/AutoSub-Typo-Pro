@@ -160,7 +160,7 @@ $smartScreenNote = @"
   1. Bấm **`More info`** *(Thông tin thêm)* → chọn **`Run anyway`** *(Vẫn chạy)* — chỉ cần làm **1 lần duy nhất**.
   2. *(Hoặc chuột phải vào file `.exe` vừa tải → **Properties** → tích **Unblock** → **OK**.)*
 - Sau khi đã có app trên máy, các bản cập nhật OTA (`.zip`) tự động cập nhật ngay trong app và **không hiện lại cảnh báo này nữa**.
-- Nếu dùng nội bộ trong team, chạy file `certs\Cai-Chung-Chi.bat` 1 lần để Windows nhận diện chữ ký số `AutoSub Typo Pro` hợp lệ.
+- Nếu dùng nội bộ trong team, chạy file `certs\Cai-Chung-Chi.bat` 1 lần để Windows nhận diện chữ ký số `AgentC0rn` hợp lệ.
 "@
 
 $ghArgs = @('release', 'create', $Tag) + $Assets + @('--title', "AutoSub Typo Pro $Tag")
