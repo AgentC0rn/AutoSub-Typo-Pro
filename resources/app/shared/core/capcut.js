@@ -702,12 +702,14 @@ function addTextTrack(draftDir, segs, opts) {
   };
 
   segs.forEach((s, i) => {
-    const len = Array.from(s.text).length;
+    // CapCut content.styles[].range tính theo UTF-16 code unit (chuỗi JS .length).
+    const len = String(s.text || '').length;
     const style = {
       fill: { alpha: 1.0, content: { render_type: 'solid', solid: { alpha: 1.0, color: s.color || [1, 1, 1] } } },
       font: { id: '', path: fwd(s.font) },
       range: [0, len],
-      size: s.size
+      size: s.size,
+      useLetterColor: true
     };
     const shObj = s.shadow && typeof s.shadow === 'object' ? s.shadow : null;
     const hasShadow = !!s.shadow;
@@ -764,6 +766,7 @@ function addTextTrack(draftDir, segs, opts) {
       background_width: 0.14,
       background_height: 0.14,
       line_max_width: s.lineMaxWidth || 1.0, alignment: 1, typesetting: 0, is_rich_text: false, fonts: [], check_flag: checkFlag,
+      use_effect_default_color: false,
       words: { start_time: [], end_time: [], text: [] }, current_words: { start_time: [], end_time: [], text: [] }
     });
     c.materials.texts.push(mat);

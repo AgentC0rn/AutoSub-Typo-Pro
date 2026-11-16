@@ -70,8 +70,11 @@ function parse(file) {
 }
 
 function advanceOf(font, cp) {
-  const gid = font.map.get(cp) || 0;
-  return font.advances[Math.min(gid, font.advances.length - 1)];
+  const gid = font.map.get(cp);
+  if (gid !== undefined) return font.advances[Math.min(gid, font.advances.length - 1)];
+  // Font thiếu glyph tiếng Việt -> trình render/CapCut fallback sang sans-serif (~0.56em).
+  const notdef = font.advances[0] || 0;
+  return Math.max(notdef, Math.round(font.unitsPerEm * 0.56));
 }
 
 /** Bề ngang (px) của chuỗi ở cỡ chữ sizePx; letterSpacingEm cộng thêm sau mỗi ký tự (theo em). */

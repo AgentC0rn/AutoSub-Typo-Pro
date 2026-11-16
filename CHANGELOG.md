@@ -4,6 +4,17 @@ Tất cả các thay đổi đáng chú ý của dự án được ghi nhận t�
 
 ---
 
+## [v2.0.4] - 2026-11-16
+
+### Sửa lỗi (Bug Fixes)
+- **Sửa triệt để lỗi lệch kích thước & chồng chữ khi thêm từ Preview vào CapCut PC (đặc biệt trên khung ngang `4:3`, `16:9` và độ phân giải 720p/1440p/4K):**
+  - Đồng bộ hệ quy chiếu cỡ chữ thực tế của CapCut (`capcutUnitPx(W) = W / 216`, thay cho `Math.min(W, H) / 216` trước đây chỉ đúng trên khung dọc `9:16` / vuông `1:1` nhưng khiến khung `4:3` bị CapCut phóng to `1.333×` và `16:9` bị phóng to `1.778×` quanh tâm cố định, gây dính/đè chữ).
+  - Bổ sung `refScale(W, H) = Math.min(W, H) / 1080` để cỡ chữ hiển thị giữ nguyên tỉ lệ thẩm mỹ đồng đều trên cả 720p, 1080p, 1440p và 4K ở cả 2 chế độ **Typography nổi bật** và **Sub Phim Ngang** (kèm biên an toàn `0.96×` trong `line_max_width: 0.86` để CapCut không tự xuống dòng ngoài ý muốn).
+  - Tính toán toạ độ từ đúng `exactPx = size * unitPx` (loại bỏ sai số làm tròn), tăng khoảng đệm tối thiểu giữa các từ & khi bật viền (`strokes`), giảm độ ép dòng khi có viền để dấu tiếng Việt không chạm nhau.
+  - Chuẩn hóa `line-height: 1.05` và `max-width: 86%` cho lớp Preview CSS khớp CapCut; cập nhật `ttf.js` ước lượng ký tự thiếu glyph, và đồng bộ `useLetterColor: true` / `use_effect_default_color: false` / độ dài UTF-16 `range` trong `capcut.js`.
+
+---
+
 ## [v2.0.3] - 2026-11-16
 
 ### Tính năng mới & Cải tiến

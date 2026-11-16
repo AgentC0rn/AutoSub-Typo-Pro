@@ -1299,7 +1299,8 @@ function drawStage(t) {
   const W = state.canvas.width, H = state.canvas.height;
   const sw = $('#stage').clientWidth || 1;
   const k = sw / W;
-  const unitPx = Math.min(W, H) / 216;
+  // Đồng bộ tuyệt đối với hệ quy chiếu cỡ chữ thực tế của CapCut PC (font_size * W / 216).
+  const unitPx = typo.capcutUnitPx ? typo.capcutUnitPx(W) : (W / 216);
   const active = state.segs.filter((s) => t >= s.start && t < s.end);
   const key = active.map((s) => s.lane + s.start).join('|') + sw;
   if (key !== state.shown) {

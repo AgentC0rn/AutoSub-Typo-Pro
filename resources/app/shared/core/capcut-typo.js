@@ -3,7 +3,7 @@
  *
  * Hiệu chỉnh trên CapCut 9.4/9.7/9.8:
  *   - toạ độ x,y chuẩn hoá theo nửa khung, y hướng lên, neo ở tâm chữ
- *   - 1 đơn vị cỡ chữ ≈ min(W,H)/216 px
+ *   - 1 đơn vị cỡ chữ CapCut (font_size) = W / 216 px (tỉ lệ theo bề ngang canvas W, áp dụng chung 9:16, 4:3, 16:9, 1:1)
  */
 'use strict';
 const fs = require('fs');
@@ -125,11 +125,21 @@ const PRESETS = [
   }
 ];
 
-const OVERLAP = 0.14;
+const OVERLAP = 0.10;
+const OVERLAP_BORDER = 0.06;
 const LEAD = 0.04;
 const IN_DUR = 0.32;
 const OUT_DUR = 0.15;
 const GLOW = { strength: 0.08, range: 0.08 };
+
+/** 1 đơn vị font_size trong CapCut PC tương đương W / 216 px trên canvas. */
+function capcutUnitPx(W) {
+  return Math.max(1, W || 1080) / 216;
+}
+/** Tỉ lệ quy chiếu theo cạnh ngắn 1080 để giữ kích thước chữ nhất quán ở 720p/1080p/1440p/4K. */
+function refScale(W, H) {
+  return Math.min(W || 1080, H || 1920) / 1080;
+}
 
 const toHex = (c) => '#' + c.map((v) => Math.round(Math.max(0, Math.min(1, v)) * 255).toString(16).padStart(2, '0')).join('').toUpperCase();
 
@@ -154,24 +164,46 @@ function fontPath(file, appFontsDir) {
 function buildSegments(groups, o) {
   o = Object.assign({ width: 1080, height: 1920, yPos: 0.72, maxWidth: 0.82, scale: 1, shadow: true, glow: true }, o);
   const W = o.width, H = o.height;
-  const unitPx = Math.min(W, H) / 216;
+  const unitPx = capcutUnitPx(W);
+  const baseScale = refScale(W, H);
   const maxW = W * o.maxWidth;
   const segs = [];
 
   groups.forEach((g, gi) => {
     const go = groupOpts(o, g, gi);
+    const strokeGapEm = go.border ? (go.border.width || 0.08) * 1.15 : 0;
+    const extraGapEm = strokeGapEm + 0.025;
+    const overlap = go.border ? OVERLAP_BORDER : OVERLAP;
+
     const lines = g.lines.map((ln) => {
       const st = styleOf(ln.style, go);
       const file = st.font || fontPath(st.file, o.fontsDir);
-      const text = ln.words.map((w) => w.text).join(' ');
-      let px = st.px * go.scale;
-      const w = ttf.measure(file, text, px) * (st.ink || 1);
-      if (w > maxW) px *= maxW / w;
-      return { st, file, text, px, w: Math.min(w, maxW), h: px * st.lh, words: ln.words, style: ln.style };
+      const spaceEm = Math.max(0.24, ttf.measure(file, ' ', 1));
+      const wordEm = ln.words.map((w) => ttf.measure(file, w.text, 1));
+      const gapEm = spaceEm + extraGapEm;
+      const totalEm = wordEm.reduce((acc, v) => acc + v, 0) + Math.max(0, ln.words.length - 1) * gapEm;
+      let px = st.px * baseScale * go.scale;
+      const estW = totalEm * px * (st.ink || 1);
+      if (estW > maxW) px *= maxW / estW;
+      const size = +(px / unitPx).toFixed(2);
+      const exactPx = size * unitPx;
+      const wordWidths = wordEm.map((em) => em * exactPx);
+      const lineAdvW = totalEm * exactPx;
+      return {
+        st, file, text: ln.words.map((w) => w.text).join(' '),
+        px: exactPx, size,
+        w: Math.min(lineAdvW * (st.ink || 1), maxW),
+        advW: lineAdvW,
+        wordWidths,
+        gapPx: gapEm * exactPx,
+        h: exactPx * st.lh,
+        words: ln.words,
+        style: ln.style
+      };
     });
 
     let y = 0;
-    lines.forEach((l, i) => { if (i > 0) y -= OVERLAP * l.px; l.top = y; y += l.h; });
+    lines.forEach((l, i) => { if (i > 0) y -= overlap * l.px; l.top = y; y += l.h; });
     const total = y, top = H * go.yPos - total / 2;
     const anim = ANIMS[go.anim] || ANIMS.fade;
     const bw = Math.max(...lines.map((l) => l.w));
@@ -182,13 +214,13 @@ function buildSegments(groups, o) {
       let cx = W / 2;
       if (lines.length === 3 && i === 0) cx -= (bw - l.w) / 2;
       if (lines.length === 3 && i === 2) cx += (bw - l.w) / 2;
-      const adv = ttf.measure(l.file, l.text, l.px);
-      const left = cx - adv / 2;
+      let curX = cx - l.advW / 2;
       const yN = -(cy - H / 2) / (H / 2);
       const end = g.end;
       l.words.forEach((w, k) => {
-        const prefix = l.words.slice(0, k).map((x) => x.text).join(' ') + (k ? ' ' : '');
-        const wx = left + ttf.measure(l.file, prefix, l.px) + ttf.measure(l.file, w.text, l.px) / 2;
+        const wWidth = l.wordWidths[k];
+        const wx = curX + wWidth / 2;
+        curX += wWidth + l.gapPx;
         const xN = (wx - W / 2) / (W / 2);
         const start = Math.max(g.start, w.start - LEAD);
         segs.push({
@@ -198,7 +230,7 @@ function buildSegments(groups, o) {
           lane: 'W' + (++wordIdx),
           text: w.text,
           font: l.file,
-          size: +(l.px / unitPx).toFixed(2),
+          size: l.size,
           color: l.st.color,
           start, end: Math.max(start + 0.2, end),
           x: +xN.toFixed(4),
@@ -357,11 +389,13 @@ function noOverlap(segs) {
 function buildMovieSegments(cues, o) {
   o = Object.assign({ width: 1080, height: 1920, yPos: 0.86, scale: 1, shadow: true, anim: 'none', fps: 30 }, o);
   const W = o.width, H = o.height;
-  const unitPx = Math.min(W, H) / 216;
+  const unitPx = capcutUnitPx(W);
+  const baseScale = refScale(W, H);
   const st = styleOf('base', o);
   const file = st.font || fontPath(STYLE.base.file, o.fontsDir);
-  const basePx = (W > H ? 52 : 48) * (o.scale || 1);
+  const basePx = (W > H ? 52 : 48) * baseScale * (o.scale || 1);
   const maxW = W * 0.86;
+  const safeMaxW = maxW * 0.96;
   const yN = +(-(H * o.yPos - H / 2) / (H / 2)).toFixed(4);
   const animKind = o.movieAnim || (o.anim === 'none' || o.anim === 'fade' || o.anim === 'rise' || o.anim === 'float' ? o.anim : 'none');
 
@@ -371,7 +405,7 @@ function buildMovieSegments(cues, o) {
     let px = basePx;
     rawLines.forEach((ln) => {
       const w = ttf.measure(file, ln, px);
-      if (w > maxW) px = Math.min(px, px * (maxW / w));
+      if (w > safeMaxW) px = Math.min(px, px * (safeMaxW / w));
     });
     const dur = Math.max(0.2, c.end - c.start);
     let keyframes = null;
@@ -413,10 +447,11 @@ function buildMovieSegments(cues, o) {
 /** Phụ đề thường (tùy chọn phụ đi kèm ở đáy khung). */
 function buildCaptionSegments(cues, o) {
   o = Object.assign({ width: 1080, height: 1920, yPos: 0.86, px: 46 }, o);
-  const unitPx = Math.min(o.width, o.height) / 216;
+  const unitPx = capcutUnitPx(o.width);
+  const baseScale = refScale(o.width, o.height);
   const file = styleOf('base', o).font || fontPath(STYLE.base.file, o.fontsDir);
   return noOverlap(cues.map((c) => {
-    let px = o.px;
+    let px = o.px * baseScale;
     const w = ttf.measure(file, c.text, px);
     if (w > o.width * 0.9) px *= (o.width * 0.9) / w;
     return {
@@ -431,6 +466,8 @@ module.exports = {
   buildSegments,
   buildMovieSegments,
   buildCaptionSegments,
+  capcutUnitPx,
+  refScale,
   easeKeys,
   styleOf,
   groupOpts,

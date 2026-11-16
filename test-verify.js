@@ -285,6 +285,52 @@ async function main() {
     assert(!exeBuf.includes(Buffer.from('EditorNghiepdu', 'utf16le')), 'AutoSub Typo Pro.exe must not retain old CompanyName');
     console.log('UI & packaging checks passed: layout, icon, exe metadata, CapCut registry portability');
 
+    console.log('\n=== 9. Multi-Ratio Alignment Parity (9:16, 4:3, 16:9, 1:1, 720p, 4K) & Movie Sub ===');
+    assert.strictEqual(typo.capcutUnitPx(1080), 5);
+    assert.strictEqual(+(typo.capcutUnitPx(1440)).toFixed(4), +(1440 / 216).toFixed(4));
+    assert.strictEqual(+(typo.capcutUnitPx(1920)).toFixed(4), +(1920 / 216).toFixed(4));
+    const rgbHex = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16) / 255);
+    const sampleGrp = [{
+      id: 'align-g1', start: 1.0, end: 3.0,
+      lines: [
+        { style: 'base', words: [{ text: 'những', start: 1.0, end: 1.3 }, { text: 'tình', start: 1.3, end: 1.6 }] },
+        { style: 'gold', words: [{ text: 'trạng', start: 1.6, end: 2.0 }, { text: 'mụn', start: 2.0, end: 2.5 }] }
+      ]
+    }];
+    const movieMod = require(path.join(appDir, 'shared', 'core', 'srt.js'));
+    for (const [W, H] of [[1080, 1920], [1440, 1080], [1920, 1080], [1080, 1080], [720, 1280], [3840, 2160]]) {
+      const capUnit = typo.capcutUnitPx(W);
+      for (const preset of typo.PRESETS) {
+        const pStyles = {};
+        Object.keys(preset.styles).forEach((k) => {
+          pStyles[k] = { font: typo.fontPath(preset.styles[k].file, fontsDir), color: rgbHex(preset.styles[k].color) };
+        });
+        const pSegs = typo.buildSegments(sampleGrp, {
+          width: W, height: H, fps: 30, yPos: 0.72, scale: 1, fontsDir,
+          styles: pStyles, border: preset.border || null, bg: preset.bg || null, glow: true
+        });
+        const byY = new Map();
+        pSegs.forEach((s) => { const k = s.y; if (!byY.has(k)) byY.set(k, []); byY.get(k).push(s); });
+        for (const [, line] of byY) {
+          line.sort((a, b) => a.x - b.x);
+          for (let idx = 1; idx < line.length; idx++) {
+            const a = line[idx - 1], b = line[idx];
+            const pxA = a.size * capUnit, pxB = b.size * capUnit;
+            const pad = preset.border ? pxA * (preset.border.width || 0.08) * 0.5 : 0;
+            const gap = ((b.x + 1) * W / 2 - ttf.measure(b.font, b.text, pxB) / 2 - pad) - ((a.x + 1) * W / 2 + ttf.measure(a.font, a.text, pxA) / 2 + pad);
+            assert(gap > 1, `Word overlap on ${W}x${H} ${preset.id}: gap=${gap.toFixed(1)}px`);
+          }
+        }
+      }
+      const mCues = movieMod.groupMovieCues(sampleGrp[0].lines.flatMap((l) => l.words), { width: W, height: H });
+      const mSegs = typo.buildMovieSegments(mCues, { width: W, height: H, fontsDir, scale: 1 });
+      mSegs.forEach((ms) => ms.text.split('\n').forEach((ln) => {
+        assert(ttf.measure(ms.font, ln, ms.size * capUnit) <= W * 0.86, `Movie sub overflow on ${W}x${H}`);
+      }));
+    }
+    assert(rendJs.includes('capcutUnitPx'), 'renderer.js drawStage must use capcutUnitPx for Preview-CapCut parity');
+    console.log('Multi-ratio alignment parity & Movie sub checks passed (6 resolutions x 9 presets)');
+
     console.log('\nALL VERIFICATION CHECKS PASSED!');
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
