@@ -11,8 +11,12 @@
 })(function () {
   'use strict';
 
-  var Vi = (typeof require === 'function' ? require('./vi-phrases.js') : null) ||
-    (typeof window !== 'undefined' ? window.AutoSubViPhrases : globalThis.AutoSubViPhrases);
+  var Vi = (typeof window !== 'undefined' && window.AutoSubViPhrases) ||
+    (typeof globalThis !== 'undefined' && globalThis.AutoSubViPhrases) ||
+    (typeof require === 'function' ? (function () {
+      try { return require('./vi-phrases.js'); }
+      catch (e) { try { return require('./shared/core/vi-phrases.js'); } catch (_) { return null; } }
+    })() : null);
 
   function toSet(s) { var o = {}; s.split(/\s+/).forEach(function (w) { if (w) o[w] = 1; }); return o; }
 

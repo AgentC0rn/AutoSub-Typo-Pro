@@ -409,7 +409,24 @@ async function main() {
       const voiceSegs = an1116.tracks.filter((t) => t.selected).flatMap((t) => t.segments);
       assert(voiceSegs.length > 0 && voiceSegs.every((s) => !s.path.includes('##_') && fs.existsSync(s.path)), 'Draft 1116 voice segments must resolve to existing files');
     }
-    console.log('Multi-emphasis, smart VI segmentation, Undo/Redo & placeholder resolution checks passed');
+
+    // Test 10f: Giả lập tải <script> trong Electron BrowserWindow (require neo tại resources/app/index.html)
+    const vm = require('vm');
+    const Module = require('module');
+    const appRequire = Module.createRequire(path.join(appDir, 'index.html'));
+    const ctx = { document: {}, require: appRequire, console };
+    ctx.window = ctx;
+    ctx.globalThis = ctx;
+    vm.createContext(ctx);
+    ['vi-phrases.js', 'layout.js', 'srt.js'].forEach((f) => {
+      vm.runInContext(fs.readFileSync(path.join(appDir, 'shared', 'core', f), 'utf8'), ctx, { filename: f });
+    });
+    assert(ctx.AutoSubViPhrases && typeof ctx.AutoSubViPhrases.isCompoundPair === 'function', 'Electron window must load AutoSubViPhrases');
+    assert(ctx.AutoSubLayout && typeof ctx.AutoSubLayout.buildLayout === 'function', 'Electron window must load AutoSubLayout');
+    assert(ctx.AutoSubSRT && typeof ctx.AutoSubSRT.groupMovieCues === 'function', 'Electron window must load AutoSubSRT');
+    const eGs = ctx.AutoSubLayout.buildLayout(sampleViWords, { lang: 'vi' });
+    assert(eGs.some((g) => g.words.map((w) => w.text).join(' ').includes('ở kỹ thuật triệt Biomatic')), 'Electron AutoSubLayout must use AutoSubViPhrases');
+    console.log('Multi-emphasis, smart VI segmentation, Undo/Redo, placeholder & Electron UMD checks passed');
 
     console.log('\nALL VERIFICATION CHECKS PASSED!');
   } finally {

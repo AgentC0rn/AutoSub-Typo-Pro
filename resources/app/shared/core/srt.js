@@ -6,8 +6,12 @@
 })(function () {
   'use strict';
 
-  var Vi = (typeof require === 'function' ? require('./vi-phrases.js') : null) ||
-    (typeof window !== 'undefined' ? window.AutoSubViPhrases : globalThis.AutoSubViPhrases);
+  var Vi = (typeof window !== 'undefined' && window.AutoSubViPhrases) ||
+    (typeof globalThis !== 'undefined' && globalThis.AutoSubViPhrases) ||
+    (typeof require === 'function' ? (function () {
+      try { return require('./vi-phrases.js'); }
+      catch (e) { try { return require('./shared/core/vi-phrases.js'); } catch (_) { return null; } }
+    })() : null);
 
   var DEFAULTS = { maxChars: 32, maxDur: 3.5, gap: 0.5, minDur: 0.6, twoLines: false, maxLineChars: 36 };
 
