@@ -315,7 +315,8 @@ async function main() {
           line.sort((a, b) => a.x - b.x);
           for (let idx = 1; idx < line.length; idx++) {
             const a = line[idx - 1], b = line[idx];
-            const pxA = a.size * capUnit, pxB = b.size * capUnit;
+            const pxA = a.px != null ? a.px : typo.capcutRenderedPx(a.size, W, a.font);
+            const pxB = b.px != null ? b.px : typo.capcutRenderedPx(b.size, W, b.font);
             const pad = preset.border ? pxA * (preset.border.width || 0.08) * 0.5 : 0;
             const gap = ((b.x + 1) * W / 2 - ttf.measure(b.font, b.text, pxB) / 2 - pad) - ((a.x + 1) * W / 2 + ttf.measure(a.font, a.text, pxA) / 2 + pad);
             assert(gap > 1, `Word overlap on ${W}x${H} ${preset.id}: gap=${gap.toFixed(1)}px`);
@@ -325,11 +326,68 @@ async function main() {
       const mCues = movieMod.groupMovieCues(sampleGrp[0].lines.flatMap((l) => l.words), { width: W, height: H });
       const mSegs = typo.buildMovieSegments(mCues, { width: W, height: H, fontsDir, scale: 1 });
       mSegs.forEach((ms) => ms.text.split('\n').forEach((ln) => {
-        assert(ttf.measure(ms.font, ln, ms.size * capUnit) <= W * 0.86, `Movie sub overflow on ${W}x${H}`);
+        const msPx = ms.px != null ? ms.px : typo.capcutRenderedPx(ms.size, W, ms.font);
+        assert(ttf.measure(ms.font, ln, msPx) <= W * 0.86, `Movie sub overflow on ${W}x${H}`);
       }));
     }
-    assert(rendJs.includes('capcutUnitPx'), 'renderer.js drawStage must use capcutUnitPx for Preview-CapCut parity');
-    console.log('Multi-ratio alignment parity & Movie sub checks passed (6 resolutions x 9 presets)');
+    assert(rendJs.includes('capcutUnitPx') && rendJs.includes('capcutFontScale'), 'renderer.js drawStage must use capcutUnitPx + capcutFontScale for Preview-CapCut parity');
+    // Kiểm tra chuẩn hoá hhea cho các font thấp/cao hơn Montserrat (vd SVN-Gilroy Bold 1.050, SVN-Blenda 1.003)
+    const gilroyScale = typo.capcutFontScale(typo.fontPath('SVN-Gilroy Bold.otf', fontsDir));
+    const blendaScale = typo.capcutFontScale(typo.fontPath('SVN-Blenda Script.ttf', fontsDir));
+    assert(gilroyScale > 1.15 && gilroyScale < 1.17, `Expected SVN-Gilroy scale ~1.161, got ${gilroyScale}`);
+    assert(blendaScale > 1.20 && blendaScale < 1.23, `Expected SVN-Blenda scale ~1.215, got ${blendaScale}`);
+    console.log('Multi-ratio alignment parity & Movie sub checks passed (6 resolutions x 9 presets, hhea scaling verified)');
+
+    console.log('\n=== 10. Multi-Emphasis Phrases, Smart Vietnamese Segmentation & Undo/Redo ===');
+    // Test 10a: Sửa đồng âm tiếng Việt an toàn & giữ nguyên từ ghép + cụm ngữ nghĩa
+    const sampleViWords = [
+      'Hết', 'sạch', 'lông', 'sau', 'một', 'liều', 'trình', '95%', 'các', 'bạn',
+      'Tại', 'Hoàng', 'Hoa', 'Spa', 'Khách', 'hàng', 'cảm', 'nhận', 'hiệu', 'quả', 'rõ',
+      'Mà', 'là', 'nằm', 'ở', 'kỹ', 'thuật', 'triệt', 'Biomatic', 'công', 'nghệ', 'hàn', 'băng', 'siêu', 'mắt', 'lạnh',
+      'Chỉ', 'còn', '49k', 'Inbook', 'ngay'
+    ].map((t, idx) => ({ text: t, start: idx * 0.28, end: idx * 0.28 + 0.24, rms: 0.05 }));
+    whisper.fixViHomophones(sampleViWords);
+    const fixedText = sampleViWords.map((w) => w.text).join(' ');
+    assert(fixedText.includes('liệu trình'), 'fixViHomophones must repair liều trình -> liệu trình');
+    assert(fixedText.includes('siêu mát lạnh'), 'fixViHomophones must repair siêu mắt lạnh -> siêu mát lạnh');
+    assert(fixedText.includes('Inbox ngay'), 'fixViHomophones must repair Inbook -> Inbox');
+
+    const viGroups = Layout.buildLayout(sampleViWords, { lang: 'vi' });
+    const viGroupTexts = viGroups.map((g) => g.words.map((w) => w.text).join(' '));
+    console.log('Smart VI groups:', viGroupTexts.join(' | '));
+    assert(viGroupTexts.some((t) => t.includes('ở kỹ thuật triệt Biomatic')), 'Must group "ở kỹ thuật triệt Biomatic" without dangling "công"');
+    assert(!viGroupTexts.some((t) => /\bcông$/.test(t)), 'Must never split compound "công | nghệ" across groups');
+    assert(!viGroupTexts.some((t) => /\bKhách$/.test(t)), 'Must never split compound "Khách | hàng" across groups');
+
+    // Test 10b: Sub Phim Ngang cân dòng không chẻ đôi từ ghép
+    const bal = movieMod.balanceTwoLines('công nghệ hàn băng siêu mát lạnh hôm nay', 22);
+    const [bLine1, bLine2] = bal.split('\n');
+    assert(!(/\bcông$/.test(bLine1) && /^nghệ\b/.test(bLine2)), `balanceTwoLines must not split công|nghệ: ${bal}`);
+
+    // Test 10c: Nhiều dạng nhấn & nhiều cụm từ trong cùng 1 khung + mixed inline styles
+    const targetGrp = viGroups.find((g) => g.words.some((w) => w.text === 'Biomatic'));
+    Layout.applySpan(targetGrp, 1, 2, 'gold', { lang: 'vi' });     // "kỹ thuật"
+    Layout.applySpan(targetGrp, 4, 4, 'script', { lang: 'vi' });   // "Biomatic"
+    assert.strictEqual(targetGrp.emphases.length, 2, 'Group must hold 2 independent emphasis spans');
+    Layout.toggleWord(targetGrp, 0, false, { lang: 'vi' }, 'blue'); // thêm "ở" = blue => 3 kiểu khác nhau cùng 1 khung!
+    assert.strictEqual(targetGrp.emphases.length, 3, 'Group must hold 3 emphasis styles (blue + gold + script)');
+    const cosmic = typo.PRESETS.find((p) => p.id === 'cosmic');
+    const cStyles = {};
+    Object.keys(cosmic.styles).forEach((k) => {
+      cStyles[k] = { font: typo.fontPath(cosmic.styles[k].file, fontsDir), color: rgbHex(cosmic.styles[k].color) };
+    });
+    const mSegs = typo.buildSegments([targetGrp], { width: 1080, height: 1920, fontsDir, styles: cStyles });
+    const distinctStyles = new Set(mSegs.map((s) => s.style));
+    assert(distinctStyles.has('blue') && distinctStyles.has('gold') && distinctStyles.has('script'), 'buildSegments must emit 3 styles in the same group');
+    const splitTest = Layout.splitGroup(viGroups.slice(), viGroups.indexOf(targetGrp), 3, { lang: 'vi' });
+    assert(splitTest && splitTest[0].emphases.length === 2 && splitTest[1].emphases.length === 1, 'splitGroup must slice multi-emphases cleanly');
+    const mergedBack = Layout.mergeGroups([splitTest[0], splitTest[1]], 0, { lang: 'vi' });
+    assert(mergedBack && mergedBack.emphases.length === 3, 'mergeGroups must preserve all 3 emphasis spans');
+
+    // Test 10d: UI Undo/Redo & Brush wiring checks
+    ['btn-undo', 'btn-redo', 'emph-toolbar'].forEach((id) => assert(html2.includes(`id="${id}"`), `index.html must contain #${id}`));
+    ['pushUndo', 'function undo(', 'function redo(', 'captureSnapshot', 'Layout.applySpan'].forEach((sym) => assert(rendJs.includes(sym), `renderer.js must implement ${sym}`));
+    console.log('Multi-emphasis, smart VI segmentation & Undo/Redo checks passed');
 
     console.log('\nALL VERIFICATION CHECKS PASSED!');
   } finally {

@@ -132,6 +132,9 @@ const IN_DUR = 0.32;
 const OUT_DUR = 0.15;
 const GLOW = { strength: 0.08, range: 0.08 };
 
+const REF_HHEA_HEIGHT = 1.219; // Montserrat hhea (ascender - descender) / unitsPerEm
+const fontScaleCache = Object.create(null);
+
 /** 1 đơn vị font_size trong CapCut PC tương đương W / 216 px trên canvas. */
 function capcutUnitPx(W) {
   return Math.max(1, W || 1080) / 216;
@@ -139,6 +142,28 @@ function capcutUnitPx(W) {
 /** Tỉ lệ quy chiếu theo cạnh ngắn 1080 để giữ kích thước chữ nhất quán ở 720p/1080p/1440p/4K. */
 function refScale(W, H) {
   return Math.min(W || 1080, H || 1920) / 1080;
+}
+/**
+ * CapCut PC chuẩn hoá kích thước chữ theo chiều cao hhea (ascender - descender) so với 1.219 (Montserrat).
+ * Các font có hhea thấp hơn như SVN-Gilroy (1.050) hoặc SVN-Blenda (1.003) sẽ bị CapCut tự phóng to ~1.16x–1.22x
+ * nếu không bù trừ vào font_size.
+ */
+function capcutFontScale(file) {
+  if (!file) return 1;
+  if (fontScaleCache[file] !== undefined) return fontScaleCache[file];
+  let ratio = 1;
+  try {
+    const lh = ttf.lineHeight(file, 1);
+    if (lh > 0) ratio = REF_HHEA_HEIGHT / lh;
+  } catch (e) {}
+  fontScaleCache[file] = ratio;
+  return ratio;
+}
+function capcutSizeForPx(px, W, file) {
+  return +(px / (capcutUnitPx(W) * capcutFontScale(file))).toFixed(2);
+}
+function capcutRenderedPx(size, W, file) {
+  return size * capcutUnitPx(W) * capcutFontScale(file);
 }
 
 const toHex = (c) => '#' + c.map((v) => Math.round(Math.max(0, Math.min(1, v)) * 255).toString(16).padStart(2, '0')).join('').toUpperCase();
@@ -176,34 +201,77 @@ function buildSegments(groups, o) {
     const overlap = go.border ? OVERLAP_BORDER : OVERLAP;
 
     const lines = g.lines.map((ln) => {
-      const st = styleOf(ln.style, go);
-      const file = st.font || fontPath(st.file, o.fontsDir);
-      const spaceEm = Math.max(0.24, ttf.measure(file, ' ', 1));
-      const wordEm = ln.words.map((w) => ttf.measure(file, w.text, 1));
-      const gapEm = spaceEm + extraGapEm;
-      const totalEm = wordEm.reduce((acc, v) => acc + v, 0) + Math.max(0, ln.words.length - 1) * gapEm;
-      let px = st.px * baseScale * go.scale;
-      const estW = totalEm * px * (st.ink || 1);
-      if (estW > maxW) px *= maxW / estW;
-      const size = +(px / unitPx).toFixed(2);
-      const exactPx = size * unitPx;
-      const wordWidths = wordEm.map((em) => em * exactPx);
-      const lineAdvW = totalEm * exactPx;
+      const rawItems = ln.words.map((w) => {
+        const styleName = w.style || ln.style || 'base';
+        const st = styleOf(styleName, go);
+        const file = st.font || fontPath(st.file, o.fontsDir);
+        const spaceEm = Math.max(0.24, ttf.measure(file, ' ', 1));
+        const wordEm = ttf.measure(file, w.text, 1);
+        const px0 = st.px * baseScale * go.scale;
+        return { w, styleName, st, file, spaceEm, wordEm, px0, rawW: wordEm * px0, rawSpace: spaceEm * px0 };
+      });
+      let estW = 0;
+      let inkMult = 1;
+      rawItems.forEach((it, idx) => {
+        const ink = it.st.ink || 1;
+        if (ink > inkMult) inkMult = ink;
+        estW += it.rawW * ink;
+        if (idx > 0) {
+          const prev = rawItems[idx - 1];
+          const refPx = Math.max(prev.px0, it.px0);
+          estW += Math.max(prev.rawSpace, it.rawSpace) + extraGapEm * refPx;
+        }
+      });
+      const fit = estW > maxW ? (maxW / estW) : 1;
+
+      const built = rawItems.map((it) => {
+        const size = capcutSizeForPx(it.px0 * fit, W, it.file);
+        const exactPx = capcutRenderedPx(size, W, it.file);
+        return {
+          w: it.w,
+          styleName: it.styleName,
+          st: it.st,
+          file: it.file,
+          size,
+          px: exactPx,
+          wWidth: it.wordEm * exactPx,
+          spacePx: it.spaceEm * exactPx,
+          h: exactPx * it.st.lh
+        };
+      });
+
+      const gaps = [];
+      let lineAdvW = 0;
+      built.forEach((b, idx) => {
+        lineAdvW += b.wWidth;
+        if (idx > 0) {
+          const prev = built[idx - 1];
+          const gPx = Math.max(prev.spacePx, b.spacePx) + extraGapEm * Math.max(prev.px, b.px);
+          gaps.push(gPx);
+          lineAdvW += gPx;
+        }
+      });
+
+      const pxMax = Math.max(...built.map((b) => b.px));
+      const hMax = Math.max(...built.map((b) => b.h));
       return {
-        st, file, text: ln.words.map((w) => w.text).join(' '),
-        px: exactPx, size,
-        w: Math.min(lineAdvW * (st.ink || 1), maxW),
+        text: ln.words.map((w) => w.text).join(' '),
+        px: pxMax,
+        w: Math.min(lineAdvW * inkMult, maxW),
         advW: lineAdvW,
-        wordWidths,
-        gapPx: gapEm * exactPx,
-        h: exactPx * st.lh,
-        words: ln.words,
+        gaps,
+        built,
+        h: hMax,
         style: ln.style
       };
     });
 
     let y = 0;
-    lines.forEach((l, i) => { if (i > 0) y -= overlap * l.px; l.top = y; y += l.h; });
+    lines.forEach((l, i) => {
+      if (i > 0) y -= overlap * Math.min(lines[i - 1].px, l.px);
+      l.top = y;
+      y += l.h;
+    });
     const total = y, top = H * go.yPos - total / 2;
     const anim = ANIMS[go.anim] || ANIMS.fade;
     const bw = Math.max(...lines.map((l) => l.w));
@@ -217,31 +285,33 @@ function buildSegments(groups, o) {
       let curX = cx - l.advW / 2;
       const yN = -(cy - H / 2) / (H / 2);
       const end = g.end;
-      l.words.forEach((w, k) => {
-        const wWidth = l.wordWidths[k];
+      l.built.forEach((bwItem, k) => {
+        const w = bwItem.w;
+        const wWidth = bwItem.wWidth;
         const wx = curX + wWidth / 2;
-        curX += wWidth + l.gapPx;
+        curX += wWidth + (k < l.gaps.length ? l.gaps[k] : 0);
         const xN = (wx - W / 2) / (W / 2);
         const start = Math.max(g.start, w.start - LEAD);
         segs.push({
           group: g.id,
           animName: go.anim,
-          style: l.style,
+          style: bwItem.styleName,
           lane: 'W' + (++wordIdx),
           text: w.text,
-          font: l.file,
-          size: l.size,
-          color: l.st.color,
+          font: bwItem.file,
+          size: bwItem.size,
+          px: bwItem.px,
+          color: bwItem.st.color,
           start, end: Math.max(start + 0.2, end),
           x: +xN.toFixed(4),
           y: +yN.toFixed(4),
           shadow: go.shadow,
           border: go.border || null,
           bg: go.bg || null,
-          glow: o.glow && l.st.glow ? Object.assign({ color: l.st.glow }, GLOW) : null,
+          glow: o.glow && bwItem.st.glow ? Object.assign({ color: bwItem.st.glow }, GLOW) : null,
           anim: null,
           fadeOut: anim.dur > 0, fps: o.fps, inDur: anim.dur,
-          keyframes: anim.kf({ x: xN, y: yN, W, H, fps: o.fps || 30, px: l.px })
+          keyframes: anim.kf({ x: xN, y: yN, W, H, fps: o.fps || 30, px: bwItem.px })
         });
       });
     });
@@ -337,7 +407,8 @@ const ANIM_LIST = [{ id: 'auto', label: 'Tự động (đa dạng)' }].concat(Ob
 const AUTO_STRONG = ['pop', 'elastic', 'drop', 'slam', 'whip', 'pulse'];
 const AUTO_SOFT = ['fade', 'float', 'rise', 'wave'];
 function autoAnim(g, gi) {
-  return g.span ? AUTO_STRONG[gi % AUTO_STRONG.length] : AUTO_SOFT[gi % AUTO_SOFT.length];
+  const hasEm = !!((g.emphases && g.emphases.length) || g.span);
+  return hasEm ? AUTO_STRONG[gi % AUTO_STRONG.length] : AUTO_SOFT[gi % AUTO_SOFT.length];
 }
 
 function groupOpts(o, g, gi) {
@@ -419,12 +490,14 @@ function buildMovieSegments(cues, o) {
         y: easeKeys(yN - (px * 0.35) / (H / 2), yN, fd, o.fps, EASE.outCubic)
       };
     }
+    const size = capcutSizeForPx(px, W, file);
     return {
       lane: 'MovieSub',
       isMovieSub: true,
       text,
       font: file,
-      size: +(px / unitPx).toFixed(2),
+      size,
+      px: capcutRenderedPx(size, W, file),
       color: st.color,
       start: c.start,
       end: c.end,
@@ -454,8 +527,9 @@ function buildCaptionSegments(cues, o) {
     let px = o.px * baseScale;
     const w = ttf.measure(file, c.text, px);
     if (w > o.width * 0.9) px *= (o.width * 0.9) / w;
+    const size = capcutSizeForPx(px, o.width, file);
     return {
-      lane: 'Sub', text: c.text, font: file, size: +(px / unitPx).toFixed(2), color: [1, 1, 1],
+      lane: 'Sub', text: c.text, font: file, size, px: capcutRenderedPx(size, o.width, file), color: [1, 1, 1],
       start: c.start, end: c.end, x: 0, y: +(-(o.height * o.yPos - o.height / 2) / (o.height / 2)).toFixed(4),
       shadow: true, glow: null, anim: null
     };
@@ -467,6 +541,9 @@ module.exports = {
   buildMovieSegments,
   buildCaptionSegments,
   capcutUnitPx,
+  capcutFontScale,
+  capcutSizeForPx,
+  capcutRenderedPx,
   refScale,
   easeKeys,
   styleOf,

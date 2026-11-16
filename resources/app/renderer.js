@@ -33,6 +33,9 @@ const state = {
   movieCues: [],
   segs: [],
   mode: 'typo',
+  brush: 'auto',
+  undoStack: [],
+  redoStack: [],
   effectStyle: { border: null, bg: null, shadow: true },
   shown: null,
   masterWavPath: null,
@@ -91,10 +94,106 @@ function refreshButtons() {
     split.hidden = state.mode === 'movie';
     split.disabled = busyFlag || state.mode === 'movie' || !state.groups.length;
   }
+  const emphBar = $('#emph-toolbar');
+  if (emphBar) emphBar.hidden = state.mode === 'movie';
+  const bUndo = $('#btn-undo'), bRedo = $('#btn-redo');
+  if (bUndo) {
+    const topU = state.undoStack[state.undoStack.length - 1];
+    bUndo.disabled = busyFlag || !topU;
+    bUndo.title = topU ? `Hoàn tác: ${topU.label} (Ctrl+Z)` : 'Không có thao tác để hoàn tác (Ctrl+Z)';
+  }
+  if (bRedo) {
+    const topR = state.redoStack[state.redoStack.length - 1];
+    bRedo.disabled = busyFlag || !topR;
+    bRedo.title = topR ? `Làm lại: ${topR.label} (Ctrl+Y)` : 'Không có thao tác để làm lại (Ctrl+Y)';
+  }
   const glowWrap = $('#opt-glow-wrap');
   const subWrap = $('#opt-sub-wrap');
   if (glowWrap) glowWrap.hidden = state.mode === 'movie';
   if (subWrap) subWrap.hidden = state.mode === 'movie';
+}
+
+/* ---------- Hoàn tác / Làm lại (Undo / Redo) ---------- */
+const MAX_HISTORY = 80;
+const deepClone = (v) => (v === undefined ? undefined : JSON.parse(JSON.stringify(v)));
+function captureSnapshot() {
+  return {
+    words: deepClone(state.words),
+    groups: deepClone(state.groups),
+    movieCues: deepClone(state.movieCues),
+    sel: state.sel,
+    mode: state.mode,
+    global: deepClone(state.global),
+    styles: deepClone(state.styles),
+    effectStyle: deepClone(state.effectStyle),
+    glow: $('#opt-glow') ? !!$('#opt-glow').checked : true
+  };
+}
+function pushUndo(label, presetSnap) {
+  const snap = presetSnap || captureSnapshot();
+  const sig = JSON.stringify(snap);
+  const top = state.undoStack[state.undoStack.length - 1];
+  if (top && top._sig === sig) return false;
+  state.undoStack.push({ label: label || 'Chỉnh sửa', snap, _sig: sig });
+  if (state.undoStack.length > MAX_HISTORY) state.undoStack.shift();
+  state.redoStack = [];
+  refreshButtons();
+  return true;
+}
+function applyHistoryEntry(entry) {
+  const s = entry.snap;
+  state.words = deepClone(s.words) || [];
+  state.groups = deepClone(s.groups) || [];
+  state.movieCues = deepClone(s.movieCues) || [];
+  state.sel = s.sel || null;
+  state.global = deepClone(s.global) || state.global;
+  state.styles = deepClone(s.styles) || state.styles;
+  state.effectStyle = deepClone(s.effectStyle) || { border: null, bg: null, shadow: true };
+  if ($('#opt-glow')) $('#opt-glow').checked = s.glow !== false;
+  state.mode = s.mode === 'movie' ? 'movie' : 'typo';
+
+  settings.mode = state.mode;
+  settings.styles = state.styles;
+  settings.effectStyle = state.effectStyle;
+  settings.anim = state.global.anim;
+  settings.movieAnim = state.global.movieAnim;
+  settings.scale = state.global.scale;
+  settings.yposTypo = state.global.yPos;
+  settings.yposMovie = state.global.movieYPos;
+  save();
+
+  const lo = layoutOpts();
+  scriptOkCache.clear();
+  state.groups.forEach((g) => Layout.syncGroup(g, lo));
+
+  const bTypo = $('#mode-typo'), bMovie = $('#mode-movie');
+  if (bTypo) bTypo.classList.toggle('sel', state.mode === 'typo');
+  if (bMovie) bMovie.classList.toggle('sel', state.mode === 'movie');
+  updateModeUI();
+  renderWords();
+  renderInspector();
+  renderGroups();
+  rebuildSegs();
+  renderTimelines();
+  updateMetrics();
+  stashTimeline();
+  refreshButtons();
+}
+function undo() {
+  if (busyFlag || !state.undoStack.length) return;
+  const entry = state.undoStack.pop();
+  const curSnap = captureSnapshot();
+  state.redoStack.push({ label: entry.label, snap: curSnap, _sig: JSON.stringify(curSnap) });
+  applyHistoryEntry(entry);
+  log(`↶ Hoàn tác: ${entry.label}`);
+}
+function redo() {
+  if (busyFlag || !state.redoStack.length) return;
+  const entry = state.redoStack.pop();
+  const curSnap = captureSnapshot();
+  state.undoStack.push({ label: entry.label, snap: curSnap, _sig: JSON.stringify(curSnap) });
+  applyHistoryEntry(entry);
+  log(`↷ Làm lại: ${entry.label}`);
 }
 const settings = (() => { try { return JSON.parse(localStorage.getItem('autosub-cc') || '{}'); } catch (e) { return {}; } })();
 function save() { try { localStorage.setItem('autosub-cc', JSON.stringify(settings)); } catch (e) {} }
@@ -335,7 +434,9 @@ function stashTimeline() {
     groups: state.groups,
     movieCues: state.movieCues,
     trackSel: sel,
-    sel: state.sel
+    sel: state.sel,
+    undoStack: state.undoStack,
+    redoStack: state.redoStack
   });
 }
 function cachedTimelines(dir) {
@@ -418,6 +519,8 @@ function selectDraft(d, timelineId) {
     state.movieCues = [];
     state.segs = [];
     state.sel = null;
+    state.undoStack = [];
+    state.redoStack = [];
     state.playTime = 0;
     state.activeSrc = null;
     state.activePhoto = null;
@@ -431,6 +534,10 @@ function selectDraft(d, timelineId) {
       state.groups = cache.groups || [];
       state.movieCues = cache.movieCues || (state.words.length ? SRT.groupMovieCues(state.words, state.canvas) : []);
       state.sel = state.groups.some((g) => g.id === cache.sel) ? cache.sel : null;
+      state.undoStack = Array.isArray(cache.undoStack) ? cache.undoStack : [];
+      state.redoStack = Array.isArray(cache.redoStack) ? cache.redoStack : [];
+      const lo = layoutOpts();
+      state.groups.forEach((g) => Layout.syncGroup(g, lo));
     }
 
     renderWords();
@@ -601,11 +708,12 @@ async function listen() {
     }
 
     audio.addLoudness(ws, mixRes.wavData);
+    if (state.words.length) pushUndo('Nhận dạng lại');
     state.words = ws.sort((a, b) => a.start - b.start);
     progress(1, `Hoàn tất · ${state.words.length} từ`);
     log(`Nhận dạng Âm thanh tổng xong: ${state.words.length} từ.`, 'ok');
     renderWords();
-    buildTypo();
+    buildTypo(false);
     stashTimeline();
     renderTimelines();
     updateMetrics();
@@ -631,15 +739,23 @@ function renderWords() {
       const t = s.textContent.replace(/\s+/g, ' ').trim();
       const idx = state.words.indexOf(w);
       if (idx < 0) return;
-      if (!t) { state.words.splice(idx, 1); renderWords(); buildTypo(); }
-      else if (t.includes(' ')) {
+      if (!t) {
+        pushUndo('Xoá từ "' + w.text + '"');
+        state.words.splice(idx, 1);
+        renderWords();
+        buildTypo(false);
+      } else if (t.includes(' ')) {
+        pushUndo('Tách từ "' + w.text + '"');
         const parts = Layout.splitWordTiming(w, t);
         state.words.splice(idx, 1, ...parts);
         log(`Đã tách "${w.text}" thành ${parts.length} từ: ${parts.map((p) => p.text).join(' | ')}`, 'ok');
         renderWords();
-        buildTypo();
+        buildTypo(false);
+      } else if (t !== w.text) {
+        pushUndo('Sửa từ "' + w.text + '"');
+        w.text = t;
+        buildTypo(false);
       }
-      else if (t !== w.text) { w.text = t; buildTypo(); }
     });
     s.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); s.blur(); } });
     s.addEventListener('dblclick', () => seek(Math.max(0, w.start - 0.15)));
@@ -731,8 +847,23 @@ function saveEffectStyle() {
   save();
 }
 
-function setMode(nextMode) {
-  state.mode = nextMode === 'movie' ? 'movie' : 'typo';
+function updateModeUI() {
+  const subTitle = $('#groups-sub');
+  if (subTitle) {
+    subTitle.firstChild.textContent = state.mode === 'movie' ? 'Các câu phụ đề ngang ' : 'Các cụm chữ ';
+  }
+  const hint = $('#groups-hint');
+  if (hint) {
+    hint.textContent = state.mode === 'movie'
+      ? '(chế độ Sub Phim Ngang: mỗi câu là 1 dòng ngang 1–2 hàng ở đáy khung kiểu phim/Netflix · bấm câu để xem thử)'
+      : '(bấm/kéo qua nhiều từ = nhấn 1 cụm · Shift+bấm = nối cụm · bấm nhãn = đổi kiểu · có thể nhấn nhiều kiểu trong 1 khung · ✂ hoặc Alt+bấm = tách cụm · Ctrl+Z/Y = hoàn tác)';
+  }
+}
+
+function setMode(nextMode, recordUndo) {
+  const m = nextMode === 'movie' ? 'movie' : 'typo';
+  if (recordUndo && m !== state.mode) pushUndo('Đổi chế độ ' + (m === 'movie' ? 'Sub Phim' : 'Typography'));
+  state.mode = m;
   settings.mode = state.mode;
   save();
   if (state.mode === 'movie') state.sel = null;
@@ -742,16 +873,7 @@ function setMode(nextMode) {
   const bTypo = $('#mode-typo'), bMovie = $('#mode-movie');
   if (bTypo) bTypo.classList.toggle('sel', state.mode === 'typo');
   if (bMovie) bMovie.classList.toggle('sel', state.mode === 'movie');
-  const subTitle = $('#groups-sub');
-  if (subTitle) {
-    subTitle.firstChild.textContent = state.mode === 'movie' ? 'Các câu phụ đề ngang ' : 'Các cụm chữ ';
-  }
-  const hint = $('#groups-hint');
-  if (hint) {
-    hint.textContent = state.mode === 'movie'
-      ? '(chế độ Sub Phim Ngang: mỗi câu là 1 dòng ngang 1–2 hàng ở đáy khung kiểu phim/Netflix · bấm câu để xem thử)'
-      : '(bấm cụm = sửa riêng · bấm từ = bật/tắt nhấn · Shift+bấm = nối từ · bấm nhãn = đổi kiểu · ✂ giữa 2 từ hoặc Alt+bấm từ = tách cụm · ⤓ Gộp = nối với cụm sau · Ctrl+B = tách tại đầu phát)';
-  }
+  updateModeUI();
   renderInspector();
   renderGroups();
   rebuildSegs();
@@ -768,6 +890,7 @@ function effStyle(k) {
   };
 }
 function setStyleValue(k, v) {
+  pushUndo(v.font ? 'Đổi font chữ' : 'Đổi màu chữ');
   const g = selGroup();
   if (g) {
     g.custom = g.custom || {};
@@ -821,6 +944,7 @@ function renderInspector() {
     b.innerHTML = `<span class="demo a-${a.id}"><b>${demo}</b></span><span></span>`;
     b.lastChild.textContent = a.label;
     b.addEventListener('click', () => {
+      pushUndo('Đổi animation');
       if (isMovie) {
         state.global.movieAnim = a.id; settings.movieAnim = a.id; save();
       } else if (g) {
@@ -883,6 +1007,7 @@ function renderInspector() {
 const renderStyles = () => renderInspector();
 
 function applyPreset(preset) {
+  pushUndo('Bộ phối ' + preset.name);
   const g = selGroup();
   const keys = ['base', 'script', 'blue', 'gold'];
   if (g) {
@@ -1056,8 +1181,9 @@ function layoutOpts() {
     }
   };
 }
-function buildTypo() {
+function buildTypo(recordUndo) {
   if (!state.words.length) return;
+  if (recordUndo === true && (state.groups.length || state.movieCues.length)) pushUndo('Dàn lại toàn bộ');
   state.groups = Layout.buildLayout(state.words, layoutOpts());
   state.movieCues = SRT.groupMovieCues(state.words, state.canvas);
   state.sel = null;
@@ -1069,7 +1195,7 @@ function buildTypo() {
   if (state.mode === 'movie') {
     log(`Dàn ${state.movieCues.length} câu Sub Phim Ngang.`);
   } else {
-    log(`Dàn ${state.groups.length} cụm chữ, ${state.groups.filter((g) => g.span).length} cụm có từ nhấn.`);
+    log(`Dàn ${state.groups.length} cụm chữ, ${state.groups.filter((g) => (g.emphases && g.emphases.length) || g.span).length} cụm có từ nhấn.`);
   }
 }
 
@@ -1082,8 +1208,11 @@ function afterStructureEdit(selId, replay) {
 }
 function splitGroupAt(g, at) {
   const gi = state.groups.indexOf(g);
-  const res = gi >= 0 ? Layout.splitGroup(state.groups, gi, at, layoutOpts()) : null;
+  if (gi < 0 || !g.words || at <= 0 || at >= g.words.length) return log('Không tách được: cụm cần ít nhất 2 từ.', 'err');
+  const pre = captureSnapshot();
+  const res = Layout.splitGroup(state.groups, gi, at, layoutOpts());
   if (!res) return log('Không tách được: cụm cần ít nhất 2 từ.', 'err');
+  pushUndo(`Tách cụm #${gi + 1}`, pre);
   log(`✂ Tách cụm #${gi + 1} → "${res[0].words.map((w) => w.text).join(' ')}" | "${res[1].words.map((w) => w.text).join(' ')}"`, 'ok');
   afterStructureEdit(res[1].id, false);
 }
@@ -1101,16 +1230,21 @@ function splitGroupHalf(g) {
 }
 function mergeWithNext(g) {
   const gi = state.groups.indexOf(g);
-  const m = gi >= 0 ? Layout.mergeGroups(state.groups, gi, layoutOpts()) : null;
+  if (gi < 0 || gi + 1 >= state.groups.length) return log('Không có cụm phía sau để gộp.', 'err');
+  const pre = captureSnapshot();
+  const m = Layout.mergeGroups(state.groups, gi, layoutOpts());
   if (!m) return log('Không có cụm phía sau để gộp.', 'err');
+  pushUndo(`Gộp cụm #${gi + 1} + #${gi + 2}`, pre);
   log(`⤓ Gộp cụm #${gi + 1} với #${gi + 2} → "${m.words.map((w) => w.text).join(' ')}"`, 'ok');
   afterStructureEdit(m.id, false);
 }
 function splitAtPlayhead() {
   if (!state.groups.length) return;
   const t = currentTime();
+  const pre = captureSnapshot();
   const res = Layout.splitAtTime(state.groups, t, layoutOpts());
   if (!res) return log(`Không có cụm chữ (≥ 2 từ) nào tại ${fmt(t)} để tách.`, 'err');
+  pushUndo('Tách tại đầu phát ' + fmt(t), pre);
   log(`✂ Tách tại đầu phát ${fmt(t)} → "${res[0].words.map((w) => w.text).join(' ')}" | "${res[1].words.map((w) => w.text).join(' ')}"`, 'ok');
   afterStructureEdit(res[1].id, false);
 }
@@ -1144,12 +1278,44 @@ function rebuildSegs() {
 }
 
 const STYLE_LABEL = { base: 'Chữ thường', script: 'Viết tay', gold: 'Đậm vàng', blue: 'Đậm xanh' };
-function styleTag(style, color, clickable) {
+let dragSel = null;
+let suppressGroupClick = false;
+window.addEventListener('mouseup', (e) => {
+  if (!dragSel) return;
+  const d = dragSel;
+  dragSel = null;
+  document.querySelectorAll('.gw.selecting').forEach((n) => n.classList.remove('selecting'));
+  const g = state.groups.find((x) => x.id === d.gId);
+  if (!g) return;
+  suppressGroupClick = true;
+  setTimeout(() => { suppressGroupClick = false; }, 0);
+  const lo = layoutOpts();
+  const a = Math.min(d.start, d.cur), b = Math.max(d.start, d.cur);
+  if (a === b) {
+    if (e.altKey) { if (a > 0) splitGroupAt(g, a); return; }
+    pushUndo('Đổi kiểu nhấn "' + (g.words[a] ? g.words[a].text : '') + '"');
+    Layout.toggleWord(g, a, e.shiftKey, lo, state.brush);
+  } else {
+    const phrase = g.words.slice(a, b + 1).map((w) => w.text).join(' ');
+    pushUndo(`Nhấn cụm "${phrase}"`);
+    Layout.applySpan(g, a, b, state.brush || 'auto', lo);
+  }
+  state.sel = g.id;
+  afterEdit(true);
+});
+
+function styleTag(style, color, clickable, phraseSnippet, onRemove) {
   const t = document.createElement('span');
   t.className = 'stag' + (style ? '' : ' none');
   if (style) {
     t.style.color = color;
     if (style === 'script') t.style.fontStyle = 'italic';
+  }
+  if (phraseSnippet) {
+    const ph = document.createElement('span');
+    ph.className = 'phrase';
+    ph.textContent = `«${phraseSnippet}»`;
+    t.appendChild(ph);
   }
   const label = document.createElement('span');
   label.textContent = style ? STYLE_LABEL[style] : 'Không nhấn';
@@ -1160,7 +1326,24 @@ function styleTag(style, color, clickable) {
     ic.textContent = '⇄';
     t.appendChild(ic);
   }
+  if (onRemove) {
+    const del = document.createElement('span');
+    del.className = 'del';
+    del.textContent = '×';
+    del.title = 'Bỏ kiểu nhấn này';
+    del.addEventListener('click', (e) => { e.stopPropagation(); onRemove(); });
+    t.appendChild(del);
+  }
   return t;
+}
+function updateDragHighlight() {
+  document.querySelectorAll('.gw.selecting').forEach((n) => n.classList.remove('selecting'));
+  if (!dragSel || !dragSel.cardEl) return;
+  const a = Math.min(dragSel.start, dragSel.cur), b = Math.max(dragSel.start, dragSel.cur);
+  dragSel.cardEl.querySelectorAll('.gw').forEach((el) => {
+    const wi = parseInt(el.dataset.wi, 10);
+    if (wi >= a && wi <= b) el.classList.add('selecting');
+  });
 }
 function renderGroups() {
   const box = $('#groups');
@@ -1193,11 +1376,12 @@ function renderGroups() {
   const lo = layoutOpts();
   const animLabel = (id) => (typo.ANIM_LIST.find((a) => a.id === id) || {}).label || id;
   state.groups.forEach((g, gi) => {
+    Layout.syncGroup(g, lo);
     const el = document.createElement('div');
     el.className = 'grp' + (g.id === state.sel ? ' selected' : '');
     el.dataset.id = g.id;
     el.title = 'Bấm để chọn cụm này: sửa thuộc tính riêng + xem thử';
-    el.addEventListener('click', () => selectGroup(g));
+    el.addEventListener('click', () => { if (!suppressGroupClick) selectGroup(g); });
     const head = document.createElement('div');
     head.className = 'grp-h';
     const time = document.createElement('span');
@@ -1214,16 +1398,37 @@ function renderGroups() {
     };
     const tagbox = document.createElement('div');
     tagbox.className = 'tagbox';
-    const tag = styleTag(g.span ? g.style : null, g.span ? gs(g.style).color : null, !!g.span);
-    tag.title = g.span ? 'Bấm để đổi kiểu chữ nhấn: Viết tay → Đậm xanh → Đậm vàng' : 'Cụm này không có từ nhấn';
+    const ems = g.emphases || [];
+    const pills = document.createElement('div');
+    pills.className = 'tagpills';
+    if (!ems.length) {
+      const tag = styleTag(null, null, false);
+      tag.title = 'Cụm này chưa có từ nhấn — bấm hoặc kéo qua các từ để nhấn';
+      pills.appendChild(tag);
+    } else {
+      ems.forEach((em, emIdx) => {
+        const snippet = ems.length > 1 ? g.words.slice(em.start, em.end + 1).map((w) => w.text).join(' ') : '';
+        const tag = styleTag(em.style, gs(em.style).color, true, snippet, () => {
+          pushUndo(`Bỏ nhấn #${gi + 1}`);
+          Layout.removeSpan(g, lo, emIdx);
+          state.sel = g.id;
+          afterEdit(true);
+        });
+        tag.title = 'Bấm để đổi kiểu (Viết tay → Đậm xanh → Đậm vàng) · Bấm × để bỏ nhấn vùng này';
+        tag.addEventListener('click', (e) => {
+          e.stopPropagation();
+          pushUndo(`Đổi kiểu nhấn #${gi + 1}`);
+          Layout.cycleStyle(g, lo, emIdx);
+          state.sel = g.id;
+          afterEdit(true);
+        });
+        pills.appendChild(tag);
+      });
+    }
     const hint = document.createElement('span');
     hint.className = 'hint';
-    hint.textContent = g.span ? 'bấm để đổi kiểu' : 'bấm 1 từ để nhấn';
-    tagbox.append(tag, hint);
-    tag.addEventListener('click', (e) => {
-      e.stopPropagation();
-      if (g.span) { Layout.cycleStyle(g, lo); state.sel = g.id; afterEdit(true); }
-    });
+    hint.textContent = ems.length ? 'bấm nhãn = đổi kiểu · kéo từ = thêm cụm nhấn' : 'bấm hoặc kéo qua cụm từ để nhấn';
+    tagbox.append(pills, hint);
     const acts = document.createElement('div');
     acts.className = 'grp-acts';
     const mkAct = (label, title, fn, disabled) => {
@@ -1244,10 +1449,6 @@ function renderGroups() {
     g.lines.forEach((ln) => {
       const d = document.createElement('div');
       d.className = 'gl s-' + ln.style;
-      if (ln.style !== 'base') {
-        d.style.color = gs(ln.style).color;
-        if (ln.style === 'script') d.style.fontFamily = `"${familyFor(gs('script').font)}"`;
-      }
       ln.words.forEach((w) => {
         if (w.i > 0) {
           const cut = document.createElement('span');
@@ -1257,16 +1458,29 @@ function renderGroups() {
           cut.addEventListener('click', (e) => { e.stopPropagation(); splitGroupAt(g, w.i); });
           d.appendChild(cut);
         }
+        const wst = w.style || ln.style || 'base';
         const s = document.createElement('span');
-        s.className = 'gw';
+        s.className = 'gw s-' + wst;
+        s.dataset.wi = String(w.i);
         s.textContent = w.text;
-        s.addEventListener('click', (e) => {
+        if (wst !== 'base') {
+          s.style.color = gs(wst).color;
+          if (wst === 'script') s.style.fontFamily = `"${familyFor(gs('script').font)}"`;
+        }
+        s.addEventListener('mousedown', (e) => {
+          if (e.button !== 0) return;
           e.stopPropagation();
-          if (e.altKey) { if (w.i > 0) splitGroupAt(g, w.i); return; }
-          Layout.toggleWord(g, w.i, e.shiftKey, lo);
-          state.sel = g.id;
-          afterEdit(true);
+          e.preventDefault();
+          dragSel = { gId: g.id, cardEl: el, start: w.i, cur: w.i };
+          updateDragHighlight();
         });
+        s.addEventListener('mouseenter', () => {
+          if (dragSel && dragSel.gId === g.id) {
+            dragSel.cur = w.i;
+            updateDragHighlight();
+          }
+        });
+        s.addEventListener('click', (e) => { e.stopPropagation(); });
         d.append(s, document.createTextNode(' '));
       });
       el.appendChild(d);
@@ -1306,15 +1520,17 @@ function drawStage(t) {
   if (key !== state.shown) {
     host.innerHTML = '';
     active.forEach((s) => {
+      const fScale = typo.capcutFontScale ? typo.capcutFontScale(s.font) : 1;
+      const renPx = s.px != null ? s.px : (s.size * unitPx * fScale);
       const d = document.createElement('div');
       d.className = 'w' + (s.isMovieSub ? ' movie-sub' : '');
       d.textContent = s.text;
-      d.style.fontSize = (s.size * unitPx * k) + 'px';
+      d.style.fontSize = (renPx * k) + 'px';
       d.style.fontFamily = `"${familyFor(s.font)}", sans-serif`;
       const rgb = s.color.map((v) => Math.round(v * 255)).join(',');
       d.style.color = `rgb(${rgb})`;
       if (s.border && (s.border.width || s.border.color)) {
-        const px = Math.max(1, Math.round(s.size * unitPx * k * (s.border.width || 0.08) * 1.15));
+        const px = Math.max(1, Math.round(renPx * k * (s.border.width || 0.08) * 1.15));
         d.style.webkitTextStroke = `${px}px ${s.border.color || '#000000'}`;
         d.style.paintOrder = 'stroke fill';
       }
@@ -1824,10 +2040,18 @@ async function init() {
   state.styles = loadStyles();
   setMode(state.mode);
 
-  $('#mode-typo').addEventListener('click', () => setMode('typo'));
-  $('#mode-movie').addEventListener('click', () => setMode('movie'));
+  $('#mode-typo').addEventListener('click', () => setMode('typo', true));
+  $('#mode-movie').addEventListener('click', () => setMode('movie', true));
+
+  document.querySelectorAll('#emph-toolbar .brush-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      state.brush = btn.dataset.brush || 'auto';
+      document.querySelectorAll('#emph-toolbar .brush-btn').forEach((b) => b.classList.toggle('sel', b === btn));
+    });
+  });
 
   $('#btn-styles-reset').addEventListener('click', () => {
+    pushUndo('Về font & màu gốc');
     const g = selGroup();
     if (g && g.custom) { delete g.custom.styles; log(`Cụm #${groupIndex(g)}: về font & màu mặc định.`); afterEdit(true); return; }
     state.styles = defaultStyles();
@@ -1839,7 +2063,14 @@ async function init() {
 
   const sliderEdit = (id, key, gKey) => {
     const el = $('#insp-' + id);
+    let dragSnap = null;
+    const ensureDragSnap = () => { if (!dragSnap) dragSnap = captureSnapshot(); };
+    el.addEventListener('pointerdown', ensureDragSnap);
+    el.addEventListener('keydown', (e) => {
+      if (/^(Arrow|Home|End|Page)/.test(e.key)) ensureDragSnap();
+    });
     el.addEventListener('input', () => {
+      ensureDragSnap();
       $('#insp-' + id + '-v').textContent = el.value + '%';
       const g = selGroup(), v = parseFloat(el.value);
       if (g) { g.custom = g.custom || {}; g.custom[gKey] = v / 100; }
@@ -1848,6 +2079,10 @@ async function init() {
       rebuildSegs();
     });
     el.addEventListener('change', () => {
+      if (dragSnap) {
+        pushUndo(id === 'scale' ? 'Chỉnh cỡ chữ' : 'Chỉnh vị trí dọc', dragSnap);
+        dragSnap = null;
+      }
       const g = selGroup();
       if (!g) {
         if (id === 'scale') settings.scale = state.global.scale;
@@ -1864,7 +2099,7 @@ async function init() {
   $('#insp-deselect').addEventListener('click', () => selectGroup(null));
   $('#insp-clear').addEventListener('click', () => {
     const g = selGroup();
-    if (g) { delete g.custom; log(`Cụm #${groupIndex(g)}: đã bỏ tuỳ chỉnh.`); afterEdit(true); }
+    if (g) { pushUndo(`Bỏ tuỳ chỉnh #${groupIndex(g)}`); delete g.custom; log(`Cụm #${groupIndex(g)}: đã bỏ tuỳ chỉnh.`); afterEdit(true); }
   });
 
   $('#fm-close').addEventListener('click', closeFontPicker);
@@ -1925,18 +2160,29 @@ async function init() {
   $('#btn-drafts').addEventListener('click', renderDrafts);
   $('#draft-filter').addEventListener('input', renderDrafts);
   $('#btn-listen').addEventListener('click', listen);
-  $('#btn-layout').addEventListener('click', buildTypo);
+  $('#btn-undo').addEventListener('click', undo);
+  $('#btn-redo').addEventListener('click', redo);
+  $('#btn-layout').addEventListener('click', () => buildTypo(true));
   $('#btn-split-playhead').addEventListener('click', splitAtPlayhead);
   document.addEventListener('keydown', (e) => {
-    if (!(e.ctrlKey && (e.key === 'b' || e.key === 'B'))) return;
     const a = document.activeElement;
     if (a && (a.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName))) return;
-    e.preventDefault();
-    if (!busyFlag) splitAtPlayhead();
+    if (busyFlag) return;
+    if ((e.ctrlKey || e.metaKey) && !e.altKey) {
+      const k = e.key.toLowerCase();
+      if (k === 'b') { e.preventDefault(); splitAtPlayhead(); }
+      else if (k === 'z' && !e.shiftKey) { e.preventDefault(); undo(); }
+      else if (k === 'y' || (k === 'z' && e.shiftKey)) { e.preventDefault(); redo(); }
+    }
   });
   $('#btn-write').addEventListener('click', writeToCapCut);
   $('#lang').addEventListener('change', () => { settings.lang = $('#lang').value; save(); });
-  $('#opt-glow').addEventListener('change', rebuildSegs);
+  $('#opt-glow').addEventListener('change', () => {
+    const pre = captureSnapshot();
+    pre.glow = !$('#opt-glow').checked;
+    pushUndo('Bật/tắt phát sáng', pre);
+    rebuildSegs();
+  });
   $('#btn-play').addEventListener('click', () => {
     state.stopAt = null;
     if (state.playing) pausePlayback();

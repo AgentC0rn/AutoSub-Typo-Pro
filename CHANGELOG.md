@@ -4,6 +4,25 @@ Tất cả các thay đổi đáng chú ý của dự án được ghi nhận t�
 
 ---
 
+## [v2.0.5] - 2026-11-16
+
+### Tính năng mới (New Features)
+- **Hoàn tác / Làm lại (Undo / Redo) toàn diện:**
+  - Thêm nút **↶ Hoàn tác** (`Ctrl+Z`) và **↷ Làm lại** (`Ctrl+Y` / `Ctrl+Shift+Z`) ở Bước 3, hỗ trợ tối đa 80 bước lịch sử cho mỗi timeline (giữ riêng lịch sử khi chuyển qua lại giữa các timeline trong project).
+  - Ghi nhận lịch sử cho mọi thao tác chỉnh sửa: tách/gộp cụm, nhấn/bỏ nhấn từ, kéo chọn cụm nhấn, đổi kiểu nhấn, sửa/tách từ ở Bản chép lời, đổi font/màu/bộ phối, thanh trượt cỡ chữ & vị trí dọc, animation, bật phát sáng và chuyển chế độ.
+- **Áp dụng 1 hoặc nhiều dạng nhấn (`Viết tay`, `Đậm vàng`, `Đậm xanh`) cho nhiều cụm từ trong cùng 1 khung:**
+  - Nâng cấp `layout.js` và `capcut-typo.js` hỗ trợ `g.emphases` đa vùng/đa kiểu trong cùng 1 cụm chữ, kể cả khi các từ khác kiểu nằm cùng 1 dòng hoặc tách thành các dòng nhấn riêng biệt.
+  - Thêm thanh **Bút nhấn** (`✦ Tự động`, `Viết tay`, `Đậm vàng`, `Đậm xanh`, `✕ Bỏ nhấn`) và thao tác **kéo chuột qua nhiều từ** (hoặc `Shift+bấm`) để nhấn cả cụm từ dài trong 1 lần kéo; phần đầu mỗi thẻ cụm hiển thị nhãn đổi kiểu riêng cho từng vùng nhấn.
+- **Nhận dạng Whisper & điều phối ngắt sub tiếng Việt thông minh hơn (`vi-phrases.js`, `whisper.js`, `layout.js`, `srt.js`):**
+  - Bổ sung từ điển cụm từ ghép tiếng Việt (`công nghệ`, `hàn băng`, `mát lạnh`, `kỹ thuật`, `triệt lông`, `nang lông`, `khách hàng`, `liệu trình`…), bảo vệ từ chức năng đầu cụm (`ở`, `tại`, `để`, `sau`, `của`, `những`, `các`…) và tiểu từ cuối câu (`nha`, `nhé`, `vậy`…), kết hợp giải thuật **quy hoạch động (DP)** theo khoảng lặng & ranh giới mệnh đề để không còn ngắt trơ từ giữa cụm (`"... Biomatic công | nghệ ..."` → `"ở kỹ thuật triệt Biomatic"` | `"công nghệ hàn băng"` | `"siêu mát lạnh"`).
+  - Bổ sung ngữ cảnh `--prompt` + `-sns` cho `whisper-cli.exe` tiếng Việt và tự động sửa một số lỗi đồng âm hay gặp (`siêu mắt lạnh` → `siêu mát lạnh`, `liều trình` → `liệu trình`, `năng lông` → `nang lông`, `Inbook` → `Inbox`, `nhân yêu đã` → `nhận ưu đãi`).
+
+### Sửa lỗi (Bug Fixes)
+- **Sửa lỗi lệch cỡ chữ & dính chữ trên `9:16` ở các font có chiều cao `hhea` khác Montserrat (như `SVN-Gilroy Bold/Heavy` trong preset *Cosmic Cyber Neon*, `SVN-Blenda Script`, `Oswald`, `Anton`):**
+  - Bổ sung hệ số chuẩn hoá `capcutFontScale(file) = 1.219 / ttf.lineHeight(file, 1)` trong `capcut-typo.js` và đồng bộ trong `drawStage` (`renderer.js`), giúp loại bỏ hiện tượng CapCut PC phóng to `~1.16×–1.22×` gây đè chữ sát nhau trên `SVN-Gilroy` và `SVN-Blenda`.
+
+---
+
 ## [v2.0.4] - 2026-11-16
 
 ### Sửa lỗi (Bug Fixes)
