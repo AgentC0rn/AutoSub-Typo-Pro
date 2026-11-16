@@ -20,6 +20,8 @@ Tất cả các thay đổi đáng chú ý của dự án được ghi nhận t�
 ### Sửa lỗi (Bug Fixes)
 - **Sửa lỗi lệch cỡ chữ & dính chữ trên `9:16` ở các font có chiều cao `hhea` khác Montserrat (như `SVN-Gilroy Bold/Heavy` trong preset *Cosmic Cyber Neon*, `SVN-Blenda Script`, `Oswald`, `Anton`):**
   - Bổ sung hệ số chuẩn hoá `capcutFontScale(file) = 1.219 / ttf.lineHeight(file, 1)` trong `capcut-typo.js` và đồng bộ trong `drawStage` (`renderer.js`), giúp loại bỏ hiện tượng CapCut PC phóng to `~1.16×–1.22×` gây đè chữ sát nhau trên `SVN-Gilroy` và `SVN-Blenda`.
+- **Sửa lỗi `Không tìm thấy file âm thanh: ##_draftpath_placeholder_..._##` khi mở project dùng Compound Clip / Combination / TTS của CapCut:**
+  - Bổ sung `resolveMediaPath()` trong `capcut.js` tự động giải mã `##_draftpath_placeholder_<UUID>_##/...` và đường dẫn tương đối về thư mục gốc của project (hỗ trợ cả âm thanh trộn Master WAV lẫn video hiển thị trên khung Preview), đồng thời bỏ qua an toàn các placeholder thư viện `##_material_placeholder_..._##` không nằm trực tiếp trên đĩa.
 
 ---
 

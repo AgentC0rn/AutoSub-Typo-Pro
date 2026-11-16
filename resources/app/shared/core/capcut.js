@@ -19,6 +19,31 @@ const readJson = (f) => JSON.parse(fs.readFileSync(f, 'utf8').replace(/^\uFEFF/,
 const writeJson = (f, o) => fs.writeFileSync(f, JSON.stringify(o), 'utf8');
 const sample = (name) => readJson(path.join(SAMPLES, name + '.json'));
 
+/** Giải mã đường dẫn media có chứa placeholder nội bộ của CapCut PC (##_draftpath_placeholder_..._## hoặc đường dẫn tương đối). */
+function resolveMediaPath(rawPath, draftDir, timelineDir) {
+  if (!rawPath || typeof rawPath !== 'string') return '';
+  const p = rawPath.trim();
+  if (!p) return '';
+  if (/^##_material_placeholder_[^#]+_##$/i.test(p)) return '';
+  const mDraft = p.match(/^##_draftpath_placeholder_[^#]+_##[\\/]*(.*)$/i);
+  if (mDraft) {
+    const rel = mDraft[1].replace(/[\\/]+/g, path.sep);
+    if (!rel) return '';
+    const inDraft = draftDir ? path.resolve(draftDir, rel) : rel;
+    if (fs.existsSync(inDraft) || !timelineDir) return inDraft;
+    const inTl = path.resolve(timelineDir, rel);
+    return fs.existsSync(inTl) ? inTl : inDraft;
+  }
+  if (/^##_[^#]+_##$/.test(p)) return '';
+  if (draftDir && !path.isAbsolute(p) && !/^https?:\/\//i.test(p)) {
+    const inDraft = path.resolve(draftDir, p);
+    if (fs.existsSync(inDraft) || !timelineDir) return inDraft;
+    const inTl = path.resolve(timelineDir, p);
+    return fs.existsSync(inTl) ? inTl : inDraft;
+  }
+  return path.normalize(p);
+}
+
 function defaultDraftsRoot() {
   return path.join(
     process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'),
@@ -222,7 +247,8 @@ function listDrafts(customRoot) {
         contentDur = (c.duration || 0) / US;
         videos = ((c.materials && c.materials.videos) || [])
           .filter((v) => v.path && v.type === 'video')
-          .map((v) => v.path);
+          .map((v) => resolveMediaPath(v.path, dir) || v.path)
+          .filter(Boolean);
       }
     } catch (e) {}
 
@@ -252,18 +278,23 @@ function listDrafts(customRoot) {
 function videoClips(draftDir, timelineId) {
   const cFile = contentFiles(draftDir, timelineId)[0];
   if (!cFile) return [];
+  const tlDir = path.dirname(cFile);
   const c = readJson(cFile);
   const vids = {};
   ((c.materials && c.materials.videos) || []).forEach((v) => { vids[v.id] = v; });
   const track = (c.tracks || []).find((t) => t.type === 'video');
   if (!track) return [];
-  return (track.segments || []).filter((s) => vids[s.material_id] && vids[s.material_id].path).map((s) => ({
-    path: vids[s.material_id].path,
-    start: s.target_timerange.start / US,
-    duration: s.target_timerange.duration / US,
-    sourceStart: s.source_timerange ? s.source_timerange.start / US : 0,
-    speed: s.speed || 1
-  }));
+  return (track.segments || []).map((s) => {
+    const v = vids[s.material_id];
+    const p = v && v.path ? resolveMediaPath(v.path, draftDir, tlDir) : '';
+    return p ? {
+      path: p,
+      start: s.target_timerange.start / US,
+      duration: s.target_timerange.duration / US,
+      sourceStart: s.source_timerange ? s.source_timerange.start / US : 0,
+      speed: s.speed || 1
+    } : null;
+  }).filter(Boolean);
 }
 
 /**
@@ -274,6 +305,7 @@ function videoClips(draftDir, timelineId) {
 function analyzeTimelineAudio(draftDir, timelineId) {
   const files = contentFiles(draftDir, timelineId);
   if (!files.length) throw new Error('Không tìm thấy file timeline (draft_content.json).');
+  const tlDir = path.dirname(files[0]);
   const c = readJson(files[0]);
 
   const videos = {};
@@ -304,6 +336,8 @@ function analyzeTimelineAudio(draftDir, timelineId) {
 
       const mat = track.type === 'video' ? videos[s.material_id] : audios[s.material_id];
       if (!mat || !mat.path) return;
+      const mediaPath = resolveMediaPath(mat.path, draftDir, tlDir);
+      if (!mediaPath) return;
 
       let speed = (typeof s.speed === 'number' && s.speed > 0) ? s.speed : 1;
       if (speed === 1 && Array.isArray(s.extra_material_refs)) {
@@ -323,8 +357,8 @@ function analyzeTimelineAudio(draftDir, timelineId) {
           trackIndex,
           trackName: track.name || '',
           type: mat.type || 'video',
-          name: mat.material_name || path.basename(mat.path),
-          path: mat.path,
+          name: mat.material_name || path.basename(mediaPath),
+          path: mediaPath,
           start,
           duration,
           end: start + duration,
@@ -354,8 +388,8 @@ function analyzeTimelineAudio(draftDir, timelineId) {
         trackName: track.name || '',
         materialType: mat.type || '',
         categoryName: mat.category_name || '',
-        name: mat.material_name || mat.name || path.basename(mat.path),
-        path: mat.path,
+        name: mat.material_name || mat.name || path.basename(mediaPath),
+        path: mediaPath,
         start,
         duration,
         end: start + duration,
@@ -837,5 +871,6 @@ module.exports = {
   timelineCount,
   mainTimelineId,
   isCapCutRunning,
-  readJson
+  readJson,
+  resolveMediaPath
 };

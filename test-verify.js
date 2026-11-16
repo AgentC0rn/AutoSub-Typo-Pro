@@ -387,7 +387,29 @@ async function main() {
     // Test 10d: UI Undo/Redo & Brush wiring checks
     ['btn-undo', 'btn-redo', 'emph-toolbar'].forEach((id) => assert(html2.includes(`id="${id}"`), `index.html must contain #${id}`));
     ['pushUndo', 'function undo(', 'function redo(', 'captureSnapshot', 'Layout.applySpan'].forEach((sym) => assert(rendJs.includes(sym), `renderer.js must implement ${sym}`));
-    console.log('Multi-emphasis, smart VI segmentation & Undo/Redo checks passed');
+
+    // Test 10e: Giải mã placeholder đường dẫn media nội bộ của CapCut (##_draftpath_placeholder_..._##)
+    const phRes = cc.resolveMediaPath(
+      '##_draftpath_placeholder_0E685133-18CE-45ED-8CB8-2904A212EC80_##/Resources/combination/test_audio.aac',
+      'D:\\Capcut\\CapCut Drafts\\1116'
+    );
+    assert.strictEqual(
+      phRes,
+      path.resolve('D:\\Capcut\\CapCut Drafts\\1116', 'Resources', 'combination', 'test_audio.aac'),
+      'resolveMediaPath must expand ##_draftpath_placeholder_..._## to draftDir'
+    );
+    assert.strictEqual(
+      cc.resolveMediaPath('##_material_placeholder_23B2EC28-9736-45F9-966B-EBC7E2D228BE_##', 'D:\\Capcut\\CapCut Drafts\\1116'),
+      '',
+      'resolveMediaPath must skip non-file ##_material_placeholder_..._## references'
+    );
+    const d1116 = drafts.find((d) => d.name === '1116');
+    if (d1116) {
+      const an1116 = cc.analyzeTimelineAudio(d1116.dir);
+      const voiceSegs = an1116.tracks.filter((t) => t.selected).flatMap((t) => t.segments);
+      assert(voiceSegs.length > 0 && voiceSegs.every((s) => !s.path.includes('##_') && fs.existsSync(s.path)), 'Draft 1116 voice segments must resolve to existing files');
+    }
+    console.log('Multi-emphasis, smart VI segmentation, Undo/Redo & placeholder resolution checks passed');
 
     console.log('\nALL VERIFICATION CHECKS PASSED!');
   } finally {
