@@ -69,13 +69,12 @@
 
       <section id="setup-card" class="card" hidden>
         <h2><span class="num">0</span> Cài công cụ nhận dạng giọng nói</h2>
-        <div class="muted small">Lưu tại <code>%APPDATA%\AutoSubTypo</code>. Tự động dùng CUDA nếu có GPU NVIDIA.</div>
+        <div class="muted small">Lưu tại <code>%APPDATA%\AutoSubTypo</code>. Sử dụng faster-whisper (CPU INT8 + vad_filter).</div>
         <ul id="setup-status" class="setup-list"></ul>
         <div class="row">
           <label>Model</label>
           <select id="setup-model">
-            <option value="fast">Nhanh — large-v3-turbo (547 MB)</option>
-            <option value="best">Chính xác nhất — large-v3 (3 GB)</option>
+            <option value="phowhisper-small-ct2">PhoWhisper-small-ct2 (INT8 CPU + VAD · ~245 MB)</option>
           </select>
         </div>
         <button id="btn-setup" class="primary">Tải &amp; cài công cụ</button>
@@ -152,7 +151,7 @@
           <button type="button" class="brush-btn" data-brush="none" title="Bỏ nhấn từ hoặc cụm từ">✕ Bỏ nhấn</button>
         </div>
         <div id="groups-sub" class="sub-h">Các cụm chữ
-          <span id="groups-hint" class="muted small">(bấm/kéo từ = nhấn cụm · bấm nhãn = đổi kiểu · ✂/Alt+bấm = tách · Ctrl+Z/Y = hoàn tác)</span>
+          <span id="groups-hint" class="muted small">(bấm/kéo từ = nhấn cụm · ✎ Sửa / ↑↓ = sửa chữ &amp; lên/xuống dòng · ✂ = tách · Ctrl+Z/Y)</span>
         </div>
         <div id="groups" class="groups"></div>
         <div class="box-resizer" data-box="groups" title="Kéo để thay đổi chiều cao danh sách cụm chữ · Đúp chuột để đặt lại"></div>

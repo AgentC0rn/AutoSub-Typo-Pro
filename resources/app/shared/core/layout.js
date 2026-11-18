@@ -454,11 +454,207 @@
     return retime(groups, 0, groups.length - 1, o);
   }
 
+  function normalizeLineBreaks(ws, breaks) {
+    if (!Array.isArray(breaks)) return null;
+    var n = (ws || []).length, out = [], seen = {};
+    for (var i = 0; i < breaks.length; i++) {
+      var k = Math.round(breaks[i]);
+      if (k >= 1 && k < n && !seen[k]) { seen[k] = 1; out.push(k); }
+    }
+    return out.sort(function (a, b) { return a - b; });
+  }
+
+  function linesFromBreaks(ws, breaks, emphases) {
+    if (!ws || !ws.length) return [];
+    var cuts = [0].concat(normalizeLineBreaks(ws, breaks) || []).concat([ws.length]);
+    var out = [];
+    for (var c = 0; c < cuts.length - 1; c++) {
+      var slice = ws.slice(cuts[c], cuts[c + 1]);
+      if (!slice.length) continue;
+      var mapped = mapLineWords(ws, slice, emphases);
+      out.push({ style: uniformLineStyle(mapped), words: mapped });
+    }
+    return out;
+  }
+
+  function getGroupLineBreaks(group) {
+    if (!group || !group.words) return [];
+    if (Array.isArray(group.lineBreaks)) return normalizeLineBreaks(group.words, group.lineBreaks);
+    var lines = group.lines || [];
+    var out = [], off = 0;
+    for (var i = 0; i < lines.length; i++) {
+      if (i > 0 && off > 0 && off < group.words.length) out.push(off);
+      off += (lines[i].words || []).length;
+    }
+    return out;
+  }
+
   function relayout(group, opts) {
     var o = merge(DEFAULTS, opts);
     syncGroup(group, opts);
-    group.lines = layoutLines(group.words, group.emphases, o);
+    if (Array.isArray(group.lineBreaks)) {
+      group.lineBreaks = normalizeLineBreaks(group.words, group.lineBreaks);
+      group.lines = linesFromBreaks(group.words, group.lineBreaks, group.emphases);
+    } else {
+      delete group.lineBreaks;
+      group.lines = layoutLines(group.words, group.emphases, o);
+    }
     return group;
+  }
+
+  function moveWordLine(group, lineIdx, dir, opts) {
+    if (!group || !group.words || group.words.length < 2) return group;
+    if (!group.lines) relayout(group, opts);
+    var n = group.words.length;
+    var breaks = getGroupLineBreaks(group).slice();
+    if (dir < 0) {
+      if (lineIdx <= 0 || lineIdx - 1 >= breaks.length) return group;
+      var nextStart = lineIdx < breaks.length ? breaks[lineIdx] : n;
+      if (breaks[lineIdx - 1] + 1 >= nextStart) breaks.splice(lineIdx - 1, 1);
+      else breaks[lineIdx - 1] += 1;
+    } else if (dir > 0) {
+      if (lineIdx < 0 || lineIdx > breaks.length) return group;
+      var lineStart = lineIdx === 0 ? 0 : breaks[lineIdx - 1];
+      var lineEnd = lineIdx < breaks.length ? breaks[lineIdx] : n;
+      var lineLen = lineEnd - lineStart;
+      if (lineIdx < breaks.length) {
+        if (lineLen > 1) breaks[lineIdx] -= 1;
+        else breaks.splice(lineIdx, 1);
+      } else {
+        if (lineLen < 2) return group;
+        breaks.push(n - 1);
+      }
+    }
+    group.lineBreaks = normalizeLineBreaks(group.words, breaks);
+    return relayout(group, opts);
+  }
+
+  function resetLines(group, opts) {
+    if (!group) return group;
+    delete group.lineBreaks;
+    return relayout(group, opts);
+  }
+
+  function alignEditedWords(oldWords, newTokens) {
+    var oldW = (oldWords || []).map(function (w) { return merge(w, {}); });
+    var N = oldW.length, M = (newTokens || []).length;
+    if (!M) return { words: [], p: 0, s: 0, oldN: N };
+    if (!N) {
+      return {
+        words: newTokens.map(function (t, i) { return { text: t, start: i * 0.25, end: (i + 1) * 0.25 }; }),
+        p: 0, s: 0, oldN: 0
+      };
+    }
+    if (M === N) {
+      return {
+        words: newTokens.map(function (t, i) { return merge(oldW[i], { text: t }); }),
+        p: M, s: 0, oldN: N
+      };
+    }
+    var eqTok = function (a, b) {
+      var na = norm(a), nb = norm(b);
+      return (na || String(a).toLowerCase()) === (nb || String(b).toLowerCase());
+    };
+    var p = 0;
+    while (p < N && p < M && eqTok(oldW[p].text, newTokens[p])) p++;
+    var s = 0;
+    while (s < N - p && s < M - p && eqTok(oldW[N - 1 - s].text, newTokens[M - 1 - s])) s++;
+
+    var out = [];
+    for (var i = 0; i < p; i++) out.push(merge(oldW[i], { text: newTokens[i] }));
+
+    var oldA = p, oldB = N - s, newMid = newTokens.slice(p, M - s), kNew = newMid.length;
+    if (kNew > 0) {
+      var tLo, tHi, avgRms;
+      if (oldA < oldB) {
+        tLo = oldW[oldA].start;
+        tHi = Math.max(tLo + 0.04 * kNew, oldW[oldB - 1].end);
+        var sumR = 0, cntR = 0;
+        for (var r = oldA; r < oldB; r++) if (typeof oldW[r].rms === 'number') { sumR += oldW[r].rms; cntR++; }
+        if (cntR) avgRms = sumR / cntR;
+      } else if (oldA === 0) {
+        var first = oldW[0], fDur = Math.max(0.06, first.end - first.start);
+        var want = Math.min(0.22 * kNew, first.start);
+        if (want >= 0.04 * kNew) { tHi = first.start; tLo = Math.max(0, tHi - want); }
+        else { tLo = Math.max(0, first.start - 0.1 * kNew); tHi = first.start + fDur * 0.45; first.start = tHi; }
+        avgRms = first.rms;
+      } else if (oldA === N) {
+        var prev = out[out.length - 1], pDur = Math.max(0.06, prev.end - prev.start);
+        var steal = Math.min(0.10, pDur * 0.35);
+        tLo = prev.end - steal;
+        prev.end = Math.max(prev.start + 0.04, tLo);
+        tHi = prev.end + Math.max(0.12 * kNew, 0.16);
+        avgRms = prev.rms;
+      } else {
+        var pv = out[out.length - 1], nx = oldW[oldB];
+        var gap = nx.start - pv.end;
+        if (gap >= 0.05 * kNew) { tLo = pv.end; tHi = nx.start; }
+        else {
+          var pvSteal = Math.min(0.08, Math.max(0.02, (pv.end - pv.start) * 0.35));
+          var nxSteal = Math.min(0.08, Math.max(0.02, (nx.end - nx.start) * 0.35));
+          tLo = pv.end - pvSteal;
+          pv.end = Math.max(pv.start + 0.04, tLo);
+          tHi = Math.max(tLo + 0.04 * kNew, nx.start + nxSteal);
+          nx.start = Math.min(nx.end - 0.04, tHi);
+        }
+        avgRms = pv.rms !== undefined ? pv.rms : nx.rms;
+      }
+      var totChars = newMid.reduce(function (acc, t) { return acc + Math.max(1, t.length); }, 0);
+      var dur = Math.max(0.04 * kNew, tHi - tLo), curT = tLo;
+      for (var j = 0; j < kNew; j++) {
+        var share = dur * Math.max(1, newMid[j].length) / totChars;
+        var wObj = { text: newMid[j], start: curT, end: j === kNew - 1 ? tLo + dur : curT + share };
+        if (typeof avgRms === 'number') wObj.rms = avgRms;
+        out.push(wObj);
+        curT += share;
+      }
+    }
+
+    for (var q = N - s; q < N; q++) out.push(merge(oldW[q], { text: newTokens[M - N + q] }));
+    return { words: out, p: p, s: s, oldN: N };
+  }
+
+  function remapEmphases(oldEms, p, s, oldN, newN) {
+    var out = [], midOldEnd = oldN - s - 1, midNewEnd = newN - s - 1, delta = newN - oldN;
+    (oldEms || []).forEach(function (e) {
+      if (!e) return;
+      if (e.end < p) { out.push({ start: e.start, end: e.end, style: e.style }); return; }
+      if (e.start >= oldN - s) {
+        out.push({ start: e.start + delta, end: e.end + delta, style: e.style });
+        return;
+      }
+      var ns = e.start < p ? e.start : p;
+      var ne = e.end >= oldN - s ? e.end + delta : midNewEnd;
+      if (ns <= ne) out.push({ start: ns, end: Math.min(newN - 1, ne), style: e.style });
+      else if (e.start <= midOldEnd && newN > p) {
+        var idx = Math.max(0, Math.min(newN - 1, p));
+        out.push({ start: idx, end: idx, style: e.style });
+      }
+    });
+    return out;
+  }
+
+  function editGroupText(group, rawText, opts) {
+    if (!group) return false;
+    syncGroup(group, opts);
+    var rawLines = String(rawText || '').split(/\r?\n/).map(function (l) { return l.trim(); }).filter(Boolean);
+    var tokens = [], breaks = [];
+    rawLines.forEach(function (l) {
+      var parts = l.split(/\s+/).filter(Boolean);
+      if (!parts.length) return;
+      if (tokens.length > 0) breaks.push(tokens.length);
+      for (var i = 0; i < parts.length; i++) tokens.push(parts[i]);
+    });
+    if (!tokens.length) return false;
+    var oldN = (group.words || []).length;
+    var aligned = alignEditedWords(group.words, tokens);
+    group.words = aligned.words;
+    group.emphases = aligned.words.length === oldN
+      ? group.emphases
+      : remapEmphases(group.emphases, aligned.p, aligned.s, aligned.oldN, aligned.words.length);
+    group.lineBreaks = normalizeLineBreaks(group.words, breaks);
+    relayout(group, opts);
+    return true;
   }
 
   function pickBrushForPhrase(group, start, end, preferredStyle, opts) {
@@ -579,10 +775,14 @@
     if (!g || !g.words || at <= 0 || at >= g.words.length) return null;
     syncGroup(g, opts);
     var n = g.words.length;
-    var a = merge(g, { words: g.words.slice(0, at), emphases: sliceEmphases(g.emphases, 0, at, 0), custom: copyCustom(g.custom) });
-    var b = merge(g, { id: newGroupId(), words: g.words.slice(at), emphases: sliceEmphases(g.emphases, at, n, 0), custom: copyCustom(g.custom) });
+    var hasCustomBr = Array.isArray(g.lineBreaks);
+    var brA = hasCustomBr ? g.lineBreaks.filter(function (k) { return k > 0 && k < at; }) : undefined;
+    var brB = hasCustomBr ? g.lineBreaks.filter(function (k) { return k > at && k < n; }).map(function (k) { return k - at; }) : undefined;
+    var a = merge(g, { words: g.words.slice(0, at), emphases: sliceEmphases(g.emphases, 0, at, 0), custom: copyCustom(g.custom), lineBreaks: brA });
+    var b = merge(g, { id: newGroupId(), words: g.words.slice(at), emphases: sliceEmphases(g.emphases, at, n, 0), custom: copyCustom(g.custom), lineBreaks: brB });
     if (a.custom === undefined) delete a.custom;
     if (b.custom === undefined) delete b.custom;
+    if (!hasCustomBr) { delete a.lineBreaks; delete b.lineBreaks; }
     groups.splice(gi, 1, a, b);
     relayout(a, opts);
     relayout(b, opts);
@@ -614,6 +814,12 @@
     var ems = g.emphases.map(function (e) { return { start: e.start, end: e.end, style: e.style }; })
       .concat(sliceEmphases(h.emphases, 0, h.words.length, off));
     var m = merge(g, { words: g.words.concat(h.words), emphases: ems });
+    if (Array.isArray(g.lineBreaks) || Array.isArray(h.lineBreaks)) {
+      var br = getGroupLineBreaks(g).concat([off]).concat(getGroupLineBreaks(h).map(function (k) { return k + off; }));
+      m.lineBreaks = normalizeLineBreaks(m.words, br);
+    } else {
+      delete m.lineBreaks;
+    }
     groups.splice(gi, 2, m);
     relayout(m, opts);
     retime(groups, 0, groups.length - 1, opts);
@@ -654,6 +860,8 @@
   return {
     DEFAULTS: DEFAULTS, buildLayout: buildLayout, relayout: relayout,
     applySpan: applySpan, toggleWord: toggleWord, cycleStyle: cycleStyle, removeSpan: removeSpan, syncGroup: syncGroup,
+    moveWordLine: moveWordLine, resetLines: resetLines, editGroupText: editGroupText,
+    alignEditedWords: alignEditedWords, getGroupLineBreaks: getGroupLineBreaks,
     isStop: isStop, splitPhrases: splitPhrases, layoutLines: layoutLines, toMogrtItems: toMogrtItems,
     scriptOK: scriptOK, STYLE_ID: STYLE_ID,
     splitGroup: splitGroup, splitAtTime: splitAtTime, mergeGroups: mergeGroups,

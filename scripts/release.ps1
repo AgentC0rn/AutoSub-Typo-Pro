@@ -133,6 +133,27 @@ if ($FullInstaller) {
   $setupInfo = Get-Item $setupPath
   Write-Host ("[OK] Da tao {0} ({1:N2} MB)" -f $setupInfo.Name, ($setupInfo.Length / 1MB))
   $Assets += $setupPath
+
+  # Dong goi them runtime faster-whisper & model PhoWhisper-small-ct2 cho nguoi dung OTA
+  function New-SubZip([string]$SrcDir, [string]$OutName) {
+    if (-not (Test-Path $SrcDir)) { return $null }
+    $outZip = Join-Path $DistDir $OutName
+    if (Test-Path $outZip) { Remove-Item -Force $outZip }
+    $z = [System.IO.Compression.ZipFile]::Open($outZip, [System.IO.Compression.ZipArchiveMode]::Create)
+    try {
+      foreach ($f in (Get-ChildItem -Recurse -File -Path $SrcDir)) {
+        $rel = $f.FullName.Substring($SrcDir.Length + 1).Replace('\', '/')
+        [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($z, $f.FullName, $rel, [System.IO.Compression.CompressionLevel]::Optimal) | Out-Null
+      }
+    } finally { $z.Dispose() }
+    $info = Get-Item $outZip
+    Write-Host ("[OK] Da tao {0} ({1:N2} MB)" -f $OutName, ($info.Length / 1MB))
+    return $outZip
+  }
+  $fwZip = New-SubZip (Join-Path $Root 'resources\tools\faster-whisper') 'faster-whisper-runtime-win64.zip'
+  if ($fwZip) { $Assets += $fwZip }
+  $modelZip = New-SubZip (Join-Path $Root 'resources\tools\models\PhoWhisper-small-ct2') 'PhoWhisper-small-ct2-int8.zip'
+  if ($modelZip) { $Assets += $modelZip }
 }
 
 if ($SkipPush) {

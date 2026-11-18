@@ -203,39 +203,41 @@ const TOOLS_ROOT = path.join(APP, '..');
 const BUNDLED = [
   path.join(process.resourcesPath || '', 'tools'),
   path.join(APP, 'vendor', 'tools'),
+  path.join(process.env.LOCALAPPDATA || '', 'Programs', 'AutoSub Typo Pro for CapCut', 'resources', 'tools'),
   path.join(process.env.LOCALAPPDATA || '', 'Programs', 'AutoSub Typo for CapCut', 'resources', 'tools')
-].find((d) => d && fs.existsSync(path.join(d, 'whisper-cpu', 'whisper-cli.exe'))) || null;
-let GPU_NAME;
-const gpuName = () => (GPU_NAME === undefined ? (GPU_NAME = setup.hasNvidia()) : GPU_NAME);
+].find((d) => d && (
+  fs.existsSync(path.join(d, 'faster-whisper', 'python.exe')) ||
+  fs.existsSync(path.join(d, 'ffmpeg', 'ffmpeg.exe')) ||
+  fs.existsSync(path.join(d, 'models', 'PhoWhisper-small-ct2', 'model.bin'))
+)) || null;
 
 function bundledTools() {
-  if (!BUNDLED) return null;
-  const cpu = path.join(BUNDLED, 'whisper-cpu', 'whisper-cli.exe');
-  const cuda = path.join(BUNDLED, 'whisper-cuda', 'whisper-cli.exe');
-  const models = path.join(BUNDLED, 'models');
-  const model = fs.existsSync(models)
-    ? fs.readdirSync(models).filter((f) => /^ggml-.*\.bin$/i.test(f)).map((f) => path.join(models, f))[0]
-    : null;
+  if (!BUNDLED) return { whisper: null, ffmpeg: null, model: null };
+  const py = path.join(BUNDLED, 'faster-whisper', 'python.exe');
+  const fwPkg = path.join(BUNDLED, 'faster-whisper', 'Lib', 'site-packages', 'faster_whisper');
+  const modelDir = path.join(BUNDLED, 'models', 'PhoWhisper-small-ct2');
   const ffmpeg = path.join(BUNDLED, 'ffmpeg', 'ffmpeg.exe');
   return {
-    whisper: gpuName() && fs.existsSync(cuda) ? cuda : cpu,
-    whisperCpu: cpu,
+    whisper: (fs.existsSync(py) && fs.existsSync(fwPkg)) ? py : null,
     ffmpeg: fs.existsSync(ffmpeg) ? ffmpeg : null,
-    model
+    model: fs.existsSync(path.join(modelDir, 'model.bin')) ? modelDir : null
   };
 }
 function toolState() {
   const b = bundledTools();
-  if (b && b.whisper && b.ffmpeg && b.model) return b;
   const t = audio.findTools(TOOLS_ROOT);
-  return { whisper: t.whisper, ffmpeg: t.ffmpeg, model: audio.findModel(TOOLS_ROOT), whisperCpu: null };
+  const m = b.model || audio.findModel(TOOLS_ROOT);
+  return {
+    whisper: b.whisper || t.whisper,
+    ffmpeg: b.ffmpeg || t.ffmpeg,
+    model: m
+  };
 }
 function updateMetrics() {
   const s = toolState();
-  const gpu = gpuName();
   const pill = $('#engine-pill');
   if (s.whisper && s.ffmpeg && s.model) {
-    pill.textContent = gpu ? `GPU Ready · ${gpu}` : 'CPU Engine Ready';
+    pill.textContent = 'Faster-Whisper · CPU INT8';
   } else {
     pill.textContent = 'Thiếu công cụ';
   }
@@ -260,17 +262,16 @@ function updateMetrics() {
       ? (state.mode === 'movie' ? 'Chế độ Sub Phim Ngang · Audio 16kHz' : 'Đang phát từ Master WAV 16kHz')
       : 'Đã dựng layout chữ';
   } else {
-    $('#metric-typo-value').textContent = gpu ? 'Whisper CUDA Ready' : 'Whisper CPU Ready';
+    $('#metric-typo-value').textContent = 'PhoWhisper CPU INT8';
     $('#metric-typo-sub').textContent = s.model ? path.basename(s.model) : 'Chờ nạp model';
   }
 }
 function renderSetup() {
   const s = toolState();
-  const gpu = gpuName();
   $('#setup-status').innerHTML = [
-    ['whisper', 'whisper.cpp ' + (gpu ? '(GPU: ' + gpu + ')' : '(CPU — không thấy card NVIDIA)')],
+    ['whisper', 'faster-whisper runtime (CPU INT8 + vad_filter)'],
     ['ffmpeg', 'ffmpeg'],
-    ['model', 'Model nhận dạng giọng nói']
+    ['model', 'Model PhoWhisper-small-ct2 (INT8)']
   ].map(([k, l]) => `<li class="${s[k] ? 'ok' : 'miss'}">${s[k] ? '✓' : '○'} ${l}</li>`).join('');
   $('#setup-card').hidden = !!(s.whisper && s.ffmpeg && s.model);
   updateMetrics();
@@ -279,14 +280,39 @@ function renderSetup() {
 async function runSetup() {
   busy(true);
   try {
-    const r = await setup.install({ model: $('#setup-model').value, onStep: (m) => log(m), onProgress: (p, l) => progress(p, l) });
+    const s = toolState();
+    await setup.install({
+      model: $('#setup-model').value,
+      needWhisper: !s.whisper,
+      needFfmpeg: !s.ffmpeg,
+      needModel: !s.model,
+      onStep: (m) => log(m),
+      onProgress: (p, l) => progress(p, l)
+    });
     progress(1, 'Đã cài xong công cụ');
-    log('Đã cài xong công cụ' + (r.gpu ? ' (GPU NVIDIA).' : ' (CPU).'), 'ok');
+    log('Đã cài xong faster-whisper + PhoWhisper-small-ct2 (CPU INT8 + VAD).', 'ok');
   } catch (e) { log(e.message, 'err'); }
   finally { busy(false); renderSetup(); }
 }
 
 /* ---------- 1. Project CapCut ---------- */
+function findDraftCover(d) {
+  for (const name of ['draft_cover.jpg', 'draft_cover.jpeg', 'draft_cover.png', 'draft_cover.webp']) {
+    const p = path.join(d.dir, name);
+    try { if (fs.existsSync(p) && fs.statSync(p).size > 0) return p; } catch (e) {}
+  }
+  try {
+    const metaFile = path.join(d.dir, 'draft_meta_info.json');
+    if (fs.existsSync(metaFile)) {
+      const m = JSON.parse(fs.readFileSync(metaFile, 'utf8').replace(/^\uFEFF/, ''));
+      if (m && m.draft_cover) {
+        const resolved = cc.resolveMediaPath(m.draft_cover, d.dir);
+        if (resolved && fs.existsSync(resolved) && fs.statSync(resolved).size > 0) return resolved;
+      }
+    }
+  } catch (e) {}
+  return '';
+}
 function renderDrafts() {
   const box = $('#drafts');
   const q = $('#draft-filter').value.trim().toLowerCase();
@@ -301,9 +327,18 @@ function renderDrafts() {
   list.filter((d) => !q || d.name.toLowerCase().includes(q)).forEach((d) => {
     const el = document.createElement('div');
     el.className = 'draft' + (state.draft && state.draft.dir === d.dir ? ' sel' : '');
-    const cover = path.join(d.dir, 'draft_cover.jpg');
-    el.innerHTML = `<div class="cov"></div><div class="nm"></div><div class="meta"></div>`;
-    if (fs.existsSync(cover)) el.querySelector('.cov').style.backgroundImage = `url("${pathToFileURL(cover).href}?${Date.now()}")`;
+    const cover = findDraftCover(d);
+    el.innerHTML = `<div class="cov"><span class="cov-empty">🎬</span></div><div class="nm"></div><div class="meta"></div>`;
+    if (cover) {
+      const img = document.createElement('img');
+      img.className = 'cov-img';
+      img.alt = d.name;
+      img.loading = 'lazy';
+      img.decoding = 'async';
+      img.src = `${pathToFileURL(cover).href}?v=${Math.round(d.modified || 0)}`;
+      img.addEventListener('error', () => img.remove());
+      el.querySelector('.cov').appendChild(img);
+    }
     el.querySelector('.nm').textContent = d.name;
     el.querySelector('.meta').textContent = `${fmt(d.duration)} · ${new Date(d.modified).toLocaleDateString('vi-VN')}`;
     if (d.timelineCount > 1) {
@@ -663,8 +698,7 @@ async function listen() {
   pausePlayback();
   try {
     const tools = toolState(), model = tools.model;
-    let whisperBin = tools.whisper;
-    log(`Bắt đầu nhận dạng Âm thanh tổng (${/whisper-cuda/i.test(whisperBin) ? 'GPU: ' + gpuName() : 'CPU'}) · model ${path.basename(model)}`);
+    log(`Bắt đầu nhận dạng Âm thanh tổng (faster-whisper · CPU int8 · vad_filter) · model ${path.basename(model)}`);
 
     let mixRes = null;
     if (state.previewPromise) {
@@ -688,24 +722,13 @@ async function listen() {
     );
 
     const lang = $('#lang').value;
-    const runWhisper = (bin) => whisper.transcribe({
-      bin,
+    const ws = await whisper.transcribe({
+      bin: tools.whisper,
       model,
       wav: state.masterWavPath,
       lang,
       onProgress: (p) => progress(0.25 + p * 0.75, `Đang nghe Âm thanh tổng… ${Math.round(p * 100)}%`)
     });
-
-    let ws;
-    try {
-      ws = await runWhisper(whisperBin);
-    } catch (err) {
-      if (tools.whisperCpu && whisperBin !== tools.whisperCpu) {
-        log('GPU gặp lỗi, tự động chuyển sang nhận dạng bằng CPU…', 'err');
-        whisperBin = tools.whisperCpu;
-        ws = await runWhisper(whisperBin);
-      } else throw err;
-    }
 
     audio.alignWordsToAudio(ws, mixRes.wavData);
     audio.addLoudness(ws, mixRes.wavData);
@@ -1200,7 +1223,71 @@ function buildTypo(recordUndo) {
   }
 }
 
-/* ---------- Tách / Gộp cụm chữ sau khi nhận dạng ---------- */
+/* ---------- Tách / Gộp cụm chữ & sửa chữ / lên xuống dòng ---------- */
+let editingGroupId = null;
+function syncWordsFromGroups(sourceMode) {
+  if (sourceMode === 'movie') {
+    state.words = state.movieCues.flatMap((c) => (c.words || []).map((w) => ({ text: w.text, start: w.start, end: w.end, rms: w.rms })));
+  } else {
+    state.words = state.groups.flatMap((g) => (g.words || []).map((w) => ({ text: w.text, start: w.start, end: w.end, rms: w.rms })));
+    if (state.words.length) state.movieCues = SRT.groupMovieCues(state.words, state.canvas);
+  }
+  renderWords();
+}
+function moveGroupWordLine(g, lineIdx, dir) {
+  const gi = state.groups.indexOf(g);
+  if (gi < 0) return;
+  const pre = captureSnapshot();
+  Layout.moveWordLine(g, lineIdx, dir, layoutOpts());
+  pushUndo(`${dir < 0 ? 'Lên dòng' : 'Xuống dòng'} cụm #${gi + 1}`, pre);
+  afterStructureEdit(g.id, false);
+}
+function resetGroupLines(g) {
+  const gi = state.groups.indexOf(g);
+  if (gi < 0) return;
+  const pre = captureSnapshot();
+  Layout.resetLines(g, layoutOpts());
+  pushUndo(`Chia dòng tự động #${gi + 1}`, pre);
+  afterStructureEdit(g.id, false);
+}
+function saveGroupTextEdit(g, rawText) {
+  const gi = state.groups.indexOf(g);
+  if (gi < 0) return;
+  const pre = captureSnapshot();
+  const ok = Layout.editGroupText(g, rawText, layoutOpts());
+  if (!ok) {
+    log('Cụm chữ phải có ít nhất 1 từ.', 'err');
+    return;
+  }
+  Layout.retime(state.groups, 0, state.groups.length - 1, layoutOpts());
+  syncWordsFromGroups('typo');
+  editingGroupId = null;
+  pushUndo(`Sửa chữ cụm #${gi + 1}`, pre);
+  log(`✎ Đã cập nhật cụm #${gi + 1}: "${g.words.map((w) => w.text).join(' ')}"`, 'ok');
+  afterStructureEdit(g.id, false);
+}
+function saveMovieCueEdit(ci, rawText) {
+  const c = state.movieCues[ci];
+  if (!c) return;
+  const lines = String(rawText || '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  if (!lines.length) {
+    log('Câu phụ đề phải có ít nhất 1 chữ.', 'err');
+    return;
+  }
+  pushUndo(`Sửa sub #${ci + 1}`);
+  c.text = lines.join('\n');
+  const tokens = c.text.split(/\s+/).filter(Boolean);
+  c.words = Layout.alignEditedWords(c.words, tokens).words;
+  syncWordsFromGroups('movie');
+  editingGroupId = null;
+  renderGroups();
+  renderInspector();
+  rebuildSegs();
+  stashTimeline();
+  renderTimelines();
+  updateMetrics();
+  log(`✎ Đã cập nhật Sub #${ci + 1}.`, 'ok');
+}
 function afterStructureEdit(selId, replay) {
   state.sel = selId || null;
   afterEdit(!!replay);
@@ -1352,24 +1439,77 @@ function renderGroups() {
   if (state.mode === 'movie') {
     if (!state.movieCues.length && state.words.length) state.movieCues = SRT.groupMovieCues(state.words, state.canvas);
     state.movieCues.forEach((c, ci) => {
+      const mId = 'm' + ci;
       const el = document.createElement('div');
       el.className = 'grp';
-      el.dataset.id = 'm' + ci;
-      el.title = 'Bấm để xem thử câu phụ đề này';
-      el.addEventListener('click', () => playGroup(c));
+      el.dataset.id = mId;
+      el.title = 'Bấm để xem thử câu phụ đề này · Đúp chuột để sửa chữ / xuống dòng';
+      el.addEventListener('click', () => { if (editingGroupId !== mId) playGroup(c); });
       const head = document.createElement('div');
       head.className = 'grp-h';
       const time = document.createElement('span');
       time.textContent = `#${ci + 1} · ${fmt(c.start)} – ${fmt(c.end)}`;
+      const acts = document.createElement('div');
+      acts.className = 'grp-acts';
+      const editBtn = document.createElement('button');
+      editBtn.type = 'button';
+      editBtn.className = 'grp-act';
+      editBtn.textContent = '✎ Sửa';
+      editBtn.title = 'Sửa chữ & xuống dòng (Enter = xuống dòng, Ctrl+Enter = lưu)';
+      editBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        editingGroupId = editingGroupId === mId ? null : mId;
+        renderGroups();
+      });
+      acts.appendChild(editBtn);
+      time.appendChild(acts);
       const tag = document.createElement('span');
       tag.className = 'stag';
       tag.style.color = '#a5f3fc';
       tag.textContent = 'Sub ngang';
       head.append(time, tag);
-      const txt = document.createElement('div');
-      txt.className = 'movie-cue-txt';
-      txt.textContent = c.text;
-      el.append(head, txt);
+      el.appendChild(head);
+      if (editingGroupId === mId) {
+        const wrap = document.createElement('div');
+        wrap.className = 'grp-edit-wrap';
+        wrap.addEventListener('click', (e) => e.stopPropagation());
+        const ta = document.createElement('textarea');
+        ta.className = 'grp-edit-ta';
+        ta.rows = Math.min(4, Math.max(2, c.text.split(/\r?\n/).length + 1));
+        ta.value = c.text;
+        ta.addEventListener('keydown', (e) => {
+          if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); saveMovieCueEdit(ci, ta.value); }
+          else if (e.key === 'Escape') { e.preventDefault(); editingGroupId = null; renderGroups(); }
+        });
+        const bar = document.createElement('div');
+        bar.className = 'grp-edit-bar';
+        const hint = document.createElement('span');
+        hint.className = 'grp-edit-hint';
+        hint.textContent = 'Enter = xuống dòng · Backspace = lên dòng · Ctrl+Enter = lưu · Esc = huỷ';
+        const btns = document.createElement('div');
+        btns.className = 'grp-edit-btns';
+        const bSave = document.createElement('button');
+        bSave.type = 'button';
+        bSave.className = 'grp-act grp-act-save';
+        bSave.textContent = '✓ Lưu';
+        bSave.addEventListener('click', () => saveMovieCueEdit(ci, ta.value));
+        const bCancel = document.createElement('button');
+        bCancel.type = 'button';
+        bCancel.className = 'grp-act';
+        bCancel.textContent = '✕ Huỷ';
+        bCancel.addEventListener('click', () => { editingGroupId = null; renderGroups(); });
+        btns.append(bSave, bCancel);
+        bar.append(hint, btns);
+        wrap.append(ta, bar);
+        el.appendChild(wrap);
+        setTimeout(() => { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }, 0);
+      } else {
+        const txt = document.createElement('div');
+        txt.className = 'movie-cue-txt';
+        txt.textContent = c.text;
+        txt.addEventListener('dblclick', (e) => { e.stopPropagation(); editingGroupId = mId; renderGroups(); });
+        el.appendChild(txt);
+      }
       box.appendChild(el);
     });
     return;
@@ -1382,7 +1522,7 @@ function renderGroups() {
     el.className = 'grp' + (g.id === state.sel ? ' selected' : '');
     el.dataset.id = g.id;
     el.title = 'Bấm để chọn cụm này: sửa thuộc tính riêng + xem thử';
-    el.addEventListener('click', () => { if (!suppressGroupClick) selectGroup(g); });
+    el.addEventListener('click', () => { if (!suppressGroupClick && editingGroupId !== g.id) selectGroup(g); });
     const head = document.createElement('div');
     head.className = 'grp-h';
     const time = document.createElement('span');
@@ -1442,50 +1582,122 @@ function renderGroups() {
       b.addEventListener('click', (e) => { e.stopPropagation(); fn(); });
       acts.appendChild(b);
     };
+    mkAct('✎ Sửa', 'Sửa nội dung chữ & ngắt dòng trực tiếp trong cụm này', () => {
+      editingGroupId = editingGroupId === g.id ? null : g.id;
+      state.sel = g.id;
+      renderGroups();
+    }, false);
+    if (Array.isArray(g.lineBreaks)) {
+      mkAct('↺ Dòng', 'Khôi phục tự động chia dòng theo độ rộng', () => resetGroupLines(g), false);
+    }
     mkAct('✂ Tách', 'Tách cụm này làm đôi (chỗ ngắt cân đối nhất). Muốn chọn chỗ tách: bấm ✂ giữa các từ hoặc Alt+bấm vào từ', () => splitGroupHalf(g), g.words.length < 2);
     mkAct('⤓ Gộp', 'Gộp cụm này với cụm ngay sau', () => mergeWithNext(g), gi >= state.groups.length - 1);
     time.appendChild(acts);
     head.append(time, tagbox);
     el.appendChild(head);
-    g.lines.forEach((ln) => {
-      const d = document.createElement('div');
-      d.className = 'gl s-' + ln.style;
-      ln.words.forEach((w) => {
-        if (w.i > 0) {
-          const cut = document.createElement('span');
-          cut.className = 'cut';
-          cut.textContent = '✂';
-          cut.title = `Tách cụm tại đây (trước "${w.text}")`;
-          cut.addEventListener('click', (e) => { e.stopPropagation(); splitGroupAt(g, w.i); });
-          d.appendChild(cut);
-        }
-        const wst = w.style || ln.style || 'base';
-        const s = document.createElement('span');
-        s.className = 'gw s-' + wst;
-        s.dataset.wi = String(w.i);
-        s.textContent = w.text;
-        if (wst !== 'base') {
-          s.style.color = gs(wst).color;
-          if (wst === 'script') s.style.fontFamily = `"${familyFor(gs('script').font)}"`;
-        }
-        s.addEventListener('mousedown', (e) => {
-          if (e.button !== 0) return;
-          e.stopPropagation();
-          e.preventDefault();
-          dragSel = { gId: g.id, cardEl: el, start: w.i, cur: w.i };
-          updateDragHighlight();
-        });
-        s.addEventListener('mouseenter', () => {
-          if (dragSel && dragSel.gId === g.id) {
-            dragSel.cur = w.i;
-            updateDragHighlight();
-          }
-        });
-        s.addEventListener('click', (e) => { e.stopPropagation(); });
-        d.append(s, document.createTextNode(' '));
+    if (editingGroupId === g.id) {
+      const wrap = document.createElement('div');
+      wrap.className = 'grp-edit-wrap';
+      wrap.addEventListener('click', (e) => e.stopPropagation());
+      const ta = document.createElement('textarea');
+      ta.className = 'grp-edit-ta';
+      ta.rows = Math.min(5, Math.max(2, g.lines.length + 1));
+      ta.value = g.lines.map((ln) => ln.words.map((w) => w.text).join(' ')).join('\n');
+      ta.addEventListener('keydown', (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); saveGroupTextEdit(g, ta.value); }
+        else if (e.key === 'Escape') { e.preventDefault(); editingGroupId = null; renderGroups(); }
       });
-      el.appendChild(d);
-    });
+      const bar = document.createElement('div');
+      bar.className = 'grp-edit-bar';
+      const eHint = document.createElement('span');
+      eHint.className = 'grp-edit-hint';
+      eHint.textContent = 'Enter = xuống dòng · Backspace = lên dòng · Ctrl+Enter = lưu · Esc = huỷ';
+      const btns = document.createElement('div');
+      btns.className = 'grp-edit-btns';
+      const bSave = document.createElement('button');
+      bSave.type = 'button';
+      bSave.className = 'grp-act grp-act-save';
+      bSave.textContent = '✓ Lưu';
+      bSave.addEventListener('click', () => saveGroupTextEdit(g, ta.value));
+      const bCancel = document.createElement('button');
+      bCancel.type = 'button';
+      bCancel.className = 'grp-act';
+      bCancel.textContent = '✕ Huỷ';
+      bCancel.addEventListener('click', () => { editingGroupId = null; renderGroups(); });
+      btns.append(bSave, bCancel);
+      bar.append(eHint, btns);
+      wrap.append(ta, bar);
+      el.appendChild(wrap);
+      setTimeout(() => { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }, 0);
+    } else {
+      g.lines.forEach((ln, li) => {
+        const d = document.createElement('div');
+        d.className = 'gl s-' + ln.style;
+        const wordsWrap = document.createElement('span');
+        wordsWrap.className = 'gl-words';
+        ln.words.forEach((w) => {
+          if (w.i > 0) {
+            const cut = document.createElement('span');
+            cut.className = 'cut';
+            cut.textContent = '✂';
+            cut.title = `Tách cụm tại đây (trước "${w.text}")`;
+            cut.addEventListener('click', (e) => { e.stopPropagation(); splitGroupAt(g, w.i); });
+            wordsWrap.appendChild(cut);
+          }
+          const wst = w.style || ln.style || 'base';
+          const s = document.createElement('span');
+          s.className = 'gw s-' + wst;
+          s.dataset.wi = String(w.i);
+          s.textContent = w.text;
+          if (wst !== 'base') {
+            s.style.color = gs(wst).color;
+            if (wst === 'script') s.style.fontFamily = `"${familyFor(gs('script').font)}"`;
+          }
+          s.addEventListener('mousedown', (e) => {
+            if (e.button !== 0) return;
+            e.stopPropagation();
+            e.preventDefault();
+            dragSel = { gId: g.id, cardEl: el, start: w.i, cur: w.i };
+            updateDragHighlight();
+          });
+          s.addEventListener('mouseenter', () => {
+            if (dragSel && dragSel.gId === g.id) {
+              dragSel.cur = w.i;
+              updateDragHighlight();
+            }
+          });
+          s.addEventListener('click', (e) => { e.stopPropagation(); });
+          wordsWrap.append(s, document.createTextNode(' '));
+        });
+        d.appendChild(wordsWrap);
+        const canUp = li > 0;
+        const canDown = li < g.lines.length - 1 || ln.words.length >= 2;
+        if (canUp || canDown) {
+          const lActs = document.createElement('span');
+          lActs.className = 'gl-acts';
+          if (canUp) {
+            const bUp = document.createElement('button');
+            bUp.type = 'button';
+            bUp.className = 'gl-act';
+            bUp.textContent = '↑';
+            bUp.title = 'Lên dòng: đưa từ đầu của dòng này lên dòng trên';
+            bUp.addEventListener('click', (e) => { e.stopPropagation(); moveGroupWordLine(g, li, -1); });
+            lActs.appendChild(bUp);
+          }
+          if (canDown) {
+            const bDn = document.createElement('button');
+            bDn.type = 'button';
+            bDn.className = 'gl-act';
+            bDn.textContent = '↓';
+            bDn.title = li < g.lines.length - 1 ? 'Xuống dòng: đẩy từ cuối xuống dòng dưới' : 'Xuống dòng: tách từ cuối sang dòng mới';
+            bDn.addEventListener('click', (e) => { e.stopPropagation(); moveGroupWordLine(g, li, 1); });
+            lActs.appendChild(bDn);
+          }
+          d.appendChild(lActs);
+        }
+        el.appendChild(d);
+      });
+    }
     box.appendChild(el);
   });
   const sel = box.querySelector('.selected');

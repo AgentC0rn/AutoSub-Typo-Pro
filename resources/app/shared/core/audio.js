@@ -26,35 +26,45 @@ function findTool(extRoot, baseNames) {
   return null;
 }
 
-/** Thứ tự tìm: <plugin>/bin (bản dev) -> %APPDATA%\AutoSubTypo (bộ tự tải) -> PATH. */
+/** Thứ tự tìm: <plugin>/tools hoặc <plugin>/bin -> %APPDATA%\AutoSubTypo (bộ tự tải) -> PATH. */
 function findTools(extRoot) {
   const st = require('./setup.js').status();
+  const localPy = [
+    path.join(extRoot, 'tools', 'faster-whisper', 'python.exe'),
+    path.join(extRoot, 'faster-whisper', 'python.exe'),
+    path.join(extRoot, 'bin', 'faster-whisper', 'python.exe')
+  ].find((p) => fs.existsSync(p)) || null;
   const local = (names) => {
     for (const b of names) {
-      const f = path.join(extRoot, 'bin', IS_WIN ? b + '.exe' : b);
-      if (fs.existsSync(f)) return f;
+      for (const sub of ['bin', 'tools/ffmpeg', 'ffmpeg']) {
+        const f = path.join(extRoot, sub, IS_WIN ? b + '.exe' : b);
+        if (fs.existsSync(f)) return f;
+      }
     }
     return null;
   };
   const fromPath = (names) => { for (const b of names) { const f = onPath(IS_WIN ? b + '.exe' : b); if (f) return f; } return null; };
-  const W = ['whisper-cli'], F = ['ffmpeg'];
+  const F = ['ffmpeg'];
   return {
     ffmpeg: local(F) || st.ffmpeg || fromPath(F),
-    whisper: local(W) || st.whisper || fromPath(W)
+    whisper: localPy || st.whisper || fromPath(['python', 'python3'])
   };
 }
 
-/** Model: ưu tiên turbo (nhanh), rồi large-v3…; tìm trong <plugin>/models rồi %APPDATA%\AutoSubTypo\models. */
+/** Model CT2: ưu tiên PhoWhisper-small-ct2 trong <plugin>/models hoặc <plugin>/tools/models rồi %APPDATA%\AutoSubTypo\models. */
 function findModel(extRoot) {
-  const dirs = [path.join(extRoot, 'models'), path.join(require('./setup.js').toolsDir(), 'models')];
-  const order = [/turbo/i, /large-v3/i, /large/i, /medium/i, /small/i, /./];
+  const dirs = [
+    path.join(extRoot, 'models'),
+    path.join(extRoot, 'tools', 'models'),
+    path.join(require('./setup.js').toolsDir(), 'models')
+  ];
   for (const dir of dirs) {
     if (!fs.existsSync(dir)) continue;
-    const bins = fs.readdirSync(dir).filter((f) => /^ggml-.*\.bin$/i.test(f));
-    for (const re of order) {
-      const hit = bins.find((f) => re.test(f));
-      if (hit) return path.join(dir, hit);
-    }
+    const pref = path.join(dir, 'PhoWhisper-small-ct2');
+    if (fs.existsSync(path.join(pref, 'model.bin'))) return pref;
+    const sub = fs.readdirSync(dir, { withFileTypes: true })
+      .find((e) => e.isDirectory() && fs.existsSync(path.join(dir, e.name, 'model.bin')));
+    if (sub) return path.join(dir, sub.name);
   }
   return null;
 }

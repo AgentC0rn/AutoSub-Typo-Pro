@@ -4,6 +4,22 @@ Tất cả các thay đổi đáng chú ý của dự án được ghi nhận t�
 
 ---
 
+## [v2.0.7] - 2026-11-18
+
+### Nâng cấp & Sửa lỗi (Improvements & Bug Fixes)
+- **Thay thế `whisper.cpp` bằng `faster-whisper` (`PhoWhisper-small-ct2`, CPU INT8 + VAD):**
+  - Chuyển đổi trực tiếp model gốc `vinai/PhoWhisper-small` sang định dạng CTranslate2 lượng tử hoá `int8` (~245 MB, tích hợp `alignment_heads` & `tokenizer.json`, đóng gói tại `resources/tools/models/PhoWhisper-small-ct2`) cùng runtime Python 3.11 + `faster-whisper` + Silero VAD đóng gói sẵn (cấu hình `device='cpu'`, `compute_type='int8'`, `vad_filter=True`, `word_timestamps=True`).
+  - Lược bỏ hoàn toàn bộ nhị phân `whisper.cpp` (CPU/CUDA DLL) và model `.bin` cũ; giữ nguyên cấu trúc word-level `{ text, start, end }`, `alignWordsToAudio()` và định dạng SRT / CapCut của ứng dụng.
+  - Bổ sung đóng gói `faster-whisper-runtime-win64.zip` và `PhoWhisper-small-ct2-int8.zip` trong Release để người dùng cập nhật OTA từ v2.0.6 tự tải nhanh vào `%APPDATA%\AutoSubTypo` qua Bước 0 mà không cần cài Python thủ công.
+- **Sửa triệt để lỗi hiển thị thumbnail project ở Bước 1:**
+  - Sửa lỗi CSS Grid trên `.drafts` khi hộp danh sách có chiều cao cố định (sau khi kéo `.box-resizer`), khiến các thẻ `.draft` bị ép dẹt thành vạch mảnh ~2–3px (`grid-auto-rows: max-content; align-content: start;`).
+  - Nâng cấp `renderDrafts()` + `findDraftCover()` dùng thẻ `<img class="cov-img" loading="lazy">` kèm fallback đọc `draft_cover` trong `draft_meta_info.json` và biểu tượng dự phòng khi project chưa có ảnh bìa.
+- **Chỉnh sửa chữ trực tiếp & thao tác lên dòng / xuống dòng ngay dưới phần "Typography & Phụ đề" (Bước 3):**
+  - Bổ sung nút **`↑`** (đẩy từ đầu lên dòng trên), **`↓`** (đẩy từ cuối xuống dòng dưới hoặc tách thành dòng mới) trên từng dòng cụm chữ và nút **`↺ Dòng`** để khôi phục tự động ngắt dòng.
+  - Bổ sung nút **`✎ Sửa`** trên từng thẻ ở cả 2 chế độ **Typography nổi bật** và **Sub Phim Ngang**, mở khung soạn thảo đa dòng (`Enter` = xuống dòng, `Backspace` = lên dòng, `Ctrl+Enter` = lưu, `Esc` = huỷ) tự động giữ khớp mốc thời gian các từ lân cận, bảo toàn kiểu nhấn và đồng bộ với **Bản chép lời**, **Hoàn tác / Làm lại (`Ctrl+Z/Y`)**, khung **Preview** và xuất CapCut.
+
+---
+
 ## [v2.0.6] - 2026-11-16
 
 ### Cải tiến & Sửa lỗi (Improvements & Bug Fixes)

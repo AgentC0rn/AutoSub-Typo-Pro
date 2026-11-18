@@ -367,12 +367,17 @@ button.mini { padding: 4px 10px; font-size: 11.5px; }
 .drafts {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(126px, 1fr));
+  grid-auto-rows: max-content;
+  align-content: start;
   gap: 9px;
   max-height: 270px;
   overflow-y: auto;
   padding: 2px;
 }
 .draft {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
   background: rgba(11, 16, 38, 0.85);
   border: 1.5px solid var(--line);
   border-radius: 12px;
@@ -386,7 +391,31 @@ button.mini { padding: 4px 10px; font-size: 11.5px; }
   background: radial-gradient(circle at 50% 0%, rgba(0, 229, 255, 0.22), rgba(11, 16, 38, 0.92) 70%);
   box-shadow: 0 0 18px rgba(0, 229, 255, 0.28);
 }
-.draft .cov { aspect-ratio: 16 / 10; background: #070a17 center / cover no-repeat; }
+.draft .cov {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  flex: none;
+  background: radial-gradient(circle at 50% 45%, rgba(0, 229, 255, 0.14), rgba(7, 10, 23, 0.96) 72%);
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+}
+.draft .cov-img {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.draft .cov-empty {
+  position: absolute;
+  font-size: 20px;
+  opacity: 0.35;
+  pointer-events: none;
+}
+.draft .tl-count { z-index: 2; }
 .draft .nm { padding: 6px 8px 1px; font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .draft .meta { padding: 0 8px 7px; font-size: 10.5px; color: var(--muted); }
 .drafts:empty::before { content: 'Không tìm thấy project CapCut nào.'; color: var(--muted); padding: 12px; }
@@ -910,6 +939,7 @@ button.mini { padding: 4px 10px; font-size: 11.5px; }
 .grp-acts { display: inline-flex; gap: 4px; margin-left: 8px; vertical-align: middle; opacity: .35; transition: opacity .15s; }
 .grp:hover .grp-acts, .grp.selected .grp-acts { opacity: 1; }
 .grp-act {
+  width: auto; flex: none; margin: 0; white-space: nowrap;
   padding: 1px 7px; font-size: 10.5px; line-height: 1.5; border-radius: 6px;
   background: rgba(255, 255, 255, .05); color: var(--text);
   border: 1px solid var(--line); cursor: pointer;
@@ -923,6 +953,29 @@ button.mini { padding: 4px 10px; font-size: 11.5px; }
 }
 .grp:hover .gl .cut, .grp.selected .gl .cut { width: 13px; opacity: .55; margin: 0 1px; }
 .gl .cut:hover { opacity: 1 !important; transform: scale(1.25); }
+.gl { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; }
+.gl-words { flex: 1; min-width: 0; }
+.gl-acts { display: inline-flex; gap: 3px; flex: none; opacity: .45; transition: opacity .15s; }
+.grp:hover .gl-acts, .grp.selected .gl-acts { opacity: 1; }
+.gl-act {
+  width: auto; margin: 0; padding: 0 6px; font-size: 10.5px; line-height: 1.5; border-radius: 5px;
+  background: rgba(255, 255, 255, .05); color: var(--muted);
+  border: 1px solid var(--line); cursor: pointer;
+}
+.gl-act:hover:not(:disabled) { border-color: var(--cyan); color: var(--cyan); background: rgba(0, 229, 255, .1); }
+.grp-edit-wrap { margin-top: 6px; display: flex; flex-direction: column; gap: 6px; }
+.grp-edit-ta {
+  width: 100%; resize: vertical; min-height: 54px; padding: 7px 9px; border-radius: 9px;
+  background: rgba(6, 9, 22, 0.9); color: #fff; border: 1px solid var(--cyan);
+  font: 13px/1.45 'Segoe UI', system-ui, sans-serif; outline: none;
+  box-shadow: 0 0 0 2px rgba(0, 229, 255, 0.14);
+}
+.grp-edit-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.grp-edit-hint { font-size: 10.5px; color: var(--muted); }
+.grp-edit-btns { display: inline-flex; gap: 5px; }
+.grp-act-save { border-color: rgba(0, 229, 255, .55); color: var(--cyan); background: rgba(0, 229, 255, .12); }
+.grp-act-save:hover { border-color: var(--cyan); color: #051326; background: var(--cyan); }
+.movie-cue-txt { white-space: pre-wrap; line-height: 1.48; }
 
 /* ---------- Kéo đổi kích thước bố cục ---------- */
 .pill-ghost {

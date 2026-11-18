@@ -1,9 +1,9 @@
 /*
- * Tự tải công cụ nhận dạng giọng nói lần đầu chạy (Windows):
- *   - whisper.cpp (bản CUDA nếu có card NVIDIA, ngược lại bản CPU)
+ * Tự tải công cụ nhận dạng giọng nói lần đầu chạy hoặc sau cập nhật OTA (Windows):
+ *   - faster-whisper runtime (Python 3.11 embeddable + faster-whisper + ctranslate2 + silero-vad)
  *   - ffmpeg (bản LGPL, được phép phân phối kèm sản phẩm thương mại)
- *   - model whisper
- * Lưu tại %APPDATA%\AutoSubTypo -> cập nhật/cài lại plugin không phải tải lại. (Node)
+ *   - model PhoWhisper-small-ct2 (INT8 CPU + VAD)
+ * Lưu tại %APPDATA%\AutoSubTypo -> cập nhật OTA không phải tải lại nhiều lần. (Node)
  */
 'use strict';
 const fs = require('fs');
@@ -12,17 +12,20 @@ const path = require('path');
 const https = require('https');
 const { spawnSync, spawn } = require('child_process');
 
-const WHISPER_TAG = 'b5454';
+const REL_BASE = 'https://github.com/AgentC0rn/AutoSub-Typo-Pro/releases/latest/download';
 const SOURCES = {
-  whisperCuda: { url: `https://github.com/ggml-org/whisper.cpp/releases/download/${WHISPER_TAG}/whisper-bin-win-cuda-11.8.0-x64.zip`, mb: 272 },
-  whisperCpu: { url: `https://github.com/ggml-org/whisper.cpp/releases/download/${WHISPER_TAG}/whisper-bin-x64.zip`, mb: 9 },
+  fasterWhisper: { url: `${REL_BASE}/faster-whisper-runtime-win64.zip`, mb: 115 },
   ffmpeg: { url: 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n9.0-latest-win64-lgpl-shared-9.0.zip', mb: 73 }
 };
 const MODELS = {
-  fast: { file: 'ggml-large-v3-turbo-q5_0.bin', mb: 547, label: 'Nhanh (large-v3-turbo, 547 MB)' },
-  best: { file: 'ggml-large-v3.bin', mb: 2952, label: 'Chính xác nhất (large-v3, 3 GB)' }
+  'phowhisper-small-ct2': {
+    dir: 'PhoWhisper-small-ct2',
+    url: `${REL_BASE}/PhoWhisper-small-ct2-int8.zip`,
+    mb: 245,
+    label: 'PhoWhisper-small-ct2 (INT8 · CPU + vad_filter)'
+  }
 };
-const MODEL_URL = (f) => `https://huggingface.co/ggerganov/whisper.cpp/resolve/main/${f}`;
+const MODEL_URL = (k) => (MODELS[k] || MODELS['phowhisper-small-ct2']).url;
 
 function toolsDir() {
   const base = process.platform === 'win32'
@@ -50,16 +53,33 @@ function findFile(dir, name, depth) {
   return null;
 }
 
+function findCtranslateModelDir(modelsDir) {
+  if (!fs.existsSync(modelsDir)) return null;
+  const pref = path.join(modelsDir, 'PhoWhisper-small-ct2');
+  if (fs.existsSync(path.join(pref, 'model.bin'))) return pref;
+  for (const e of fs.readdirSync(modelsDir, { withFileTypes: true })) {
+    if (e.isDirectory() && fs.existsSync(path.join(modelsDir, e.name, 'model.bin'))) {
+      return path.join(modelsDir, e.name);
+    }
+  }
+  return null;
+}
+
+function findPythonFw(dir) {
+  const py = findFile(dir, 'python.exe', 2);
+  if (!py) return null;
+  const fwPkg = path.join(path.dirname(py), 'Lib', 'site-packages', 'faster_whisper');
+  return fs.existsSync(fwPkg) ? py : null;
+}
+
 /** Trạng thái công cụ đã tải trong %APPDATA%\AutoSubTypo. */
 function status() {
   const d = toolsDir();
-  const modelsDir = path.join(d, 'models');
-  const models = fs.existsSync(modelsDir) ? fs.readdirSync(modelsDir).filter((f) => /^ggml-.*\.bin$/i.test(f)) : [];
   return {
     dir: d,
-    whisper: findFile(path.join(d, 'whisper'), 'whisper-cli.exe', 3),
+    whisper: findPythonFw(path.join(d, 'faster-whisper')),
     ffmpeg: findFile(path.join(d, 'ffmpeg'), 'ffmpeg.exe', 3),
-    model: models.length ? path.join(modelsDir, models[0]) : null
+    model: findCtranslateModelDir(path.join(d, 'models'))
   };
 }
 
@@ -112,8 +132,8 @@ function unzip(zip, destDir) {
 }
 
 /**
- * Tải + cài đủ công cụ còn thiếu.
- * @param {{model?:'fast'|'best', gpu?:boolean, onStep?:(label:string)=>void, onProgress?:(p:number,label:string)=>void}} o
+ * Tải + cài đủ công cụ faster-whisper còn thiếu.
+ * @param {{model?:string, needWhisper?:boolean, needFfmpeg?:boolean, needModel?:boolean, onStep?:(label:string)=>void, onProgress?:(p:number,label:string)=>void}} o
  */
 async function install(o) {
   if (process.platform !== 'win32') throw new Error('Bộ tự tải hiện chỉ hỗ trợ Windows.');
@@ -122,33 +142,35 @@ async function install(o) {
   const dl = path.join(d, 'downloads');
   fs.mkdirSync(dl, { recursive: true });
   const st = status();
-  const gpu = o.gpu === undefined ? !!hasNvidia() : o.gpu;
+  const needW = o.needWhisper !== undefined ? o.needWhisper : !st.whisper;
+  const needF = o.needFfmpeg !== undefined ? o.needFfmpeg : !st.ffmpeg;
+  const needM = o.needModel !== undefined ? o.needModel : !st.model;
+
   const jobs = [];
-  if (!st.whisper) jobs.push({ key: 'whisper', src: gpu ? SOURCES.whisperCuda : SOURCES.whisperCpu, label: gpu ? 'whisper.cpp (GPU NVIDIA)' : 'whisper.cpp (CPU)', zip: true });
-  if (!st.ffmpeg) jobs.push({ key: 'ffmpeg', src: SOURCES.ffmpeg, label: 'ffmpeg', zip: true });
-  const m = MODELS[o.model || 'fast'];
-  if (!st.model) jobs.push({ key: 'models', src: { url: MODEL_URL(m.file), mb: m.mb }, label: 'model ' + m.file, zip: false, file: m.file });
+  if (needW) jobs.push({ key: 'faster-whisper', destDir: path.join(d, 'faster-whisper'), src: SOURCES.fasterWhisper, label: 'faster-whisper runtime (CPU INT8)' });
+  if (needF) jobs.push({ key: 'ffmpeg', destDir: path.join(d, 'ffmpeg'), src: SOURCES.ffmpeg, label: 'ffmpeg' });
+  const m = MODELS[o.model] || MODELS['phowhisper-small-ct2'];
+  if (needM) jobs.push({ key: 'model', destDir: path.join(d, 'models', m.dir), src: { url: m.url, mb: m.mb }, label: m.label });
 
   const totalMb = jobs.reduce((n, j) => n + j.src.mb, 0) || 1;
   let doneMb = 0;
   for (const j of jobs) {
-    const name = j.zip ? j.key + '.zip' : j.file;
-    const target = j.zip ? path.join(dl, name) : path.join(d, 'models', name);
+    const target = path.join(dl, j.key + '.zip');
     fs.mkdirSync(path.dirname(target), { recursive: true });
     if (o.onStep) o.onStep(`Đang tải ${j.label}…`);
     await download(j.src.url, target, (p, got, total) => {
       if (o.onProgress) o.onProgress((doneMb + p * j.src.mb) / totalMb, `Đang tải ${j.label}: ${Math.round(got / 1048576)}/${Math.round(total / 1048576)} MB`);
     });
-    if (j.zip) {
-      if (o.onStep) o.onStep(`Đang giải nén ${j.label}…`);
-      await unzip(target, path.join(d, j.key));
-      try { fs.unlinkSync(target); } catch (e) {}
-    }
+    if (o.onStep) o.onStep(`Đang giải nén ${j.label}…`);
+    await unzip(target, j.destDir);
+    try { fs.unlinkSync(target); } catch (e) {}
     doneMb += j.src.mb;
   }
   const after = status();
-  if (!after.whisper || !after.ffmpeg || !after.model) throw new Error('Cài chưa đủ công cụ — thử bấm tải lại.');
-  return Object.assign(after, { gpu });
+  if ((needW && !after.whisper) || (needF && !after.ffmpeg) || (needM && !after.model)) {
+    throw new Error('Cài chưa đủ công cụ — thử bấm tải lại.');
+  }
+  return Object.assign(after, { gpu: false });
 }
 
 module.exports = { toolsDir, status, install, hasNvidia, download, unzip, MODELS, SOURCES, MODEL_URL };

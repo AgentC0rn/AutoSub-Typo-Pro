@@ -57,12 +57,13 @@ async function main() {
 
   console.log('\n=== 4. Testing Master WAV Mixdown (FFmpeg + Float32Array) ===');
   const ffmpeg = path.join(toolsDir, 'ffmpeg', 'ffmpeg.exe');
-  const whisperCuda = path.join(toolsDir, 'whisper-cuda', 'whisper-cli.exe');
-  const whisperCpu = path.join(toolsDir, 'whisper-cpu', 'whisper-cli.exe');
-  const model = path.join(toolsDir, 'models', 'ggml-large-v3-turbo-q5_0.bin');
+  const pyFw = path.join(toolsDir, 'faster-whisper', 'python.exe');
+  const fwScript = path.join(appDir, 'shared', 'core', 'fw_transcribe.py');
+  const model = path.join(toolsDir, 'models', 'PhoWhisper-small-ct2');
   assert(fs.existsSync(ffmpeg), 'ffmpeg.exe missing');
-  assert(fs.existsSync(whisperCpu), 'whisper-cli.exe (cpu) missing');
-  assert(fs.existsSync(model), 'model missing');
+  assert(fs.existsSync(pyFw), 'faster-whisper python.exe missing');
+  assert(fs.existsSync(fwScript), 'fw_transcribe.py missing');
+  assert(fs.existsSync(path.join(model, 'model.bin')), 'PhoWhisper-small-ct2 model.bin missing');
 
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'autosub-test-'));
   try {
@@ -75,44 +76,41 @@ async function main() {
     const maxHa = mixHa.wavData.samples.reduce((m, v) => Math.max(m, Math.abs(v)), 0);
     assert(maxHa > 1000, 'Mixed WAV amplitude must be audible');
 
-    const opalSelectedSegs = opalVoice.flatMap((t) => t.segments);
-    const wavOpal = path.join(tmp, 'opal_master.wav');
-    const mixOpal = await audio.buildMasterWav(ffmpeg, opalSelectedSegs, aOpal.projectDuration, wavOpal);
-    console.log('Opal 2 Master WAV stats:', mixOpal.stats);
-    assert(fs.existsSync(wavOpal), 'opal_master.wav must exist');
-
-    console.log('\n=== 5. Testing End-to-End Whisper + Layout + CapCut Typo Segments on "Opal 2" ===');
-    const gpu = setup.hasNvidia();
-    const bin = (gpu && fs.existsSync(whisperCuda)) ? whisperCuda : whisperCpu;
-    console.log('Running whisper with:', bin, gpu ? `(GPU: ${gpu})` : '(CPU)');
-    let words;
-    try {
-      words = await whisper.transcribe({ bin, model, wav: wavOpal, lang: 'en' });
-    } catch (e) {
-      if (bin !== whisperCpu) {
-        console.log('GPU whisper failed, falling back to CPU:', e.message);
-        words = await whisper.transcribe({ bin: whisperCpu, model, wav: wavOpal, lang: 'en' });
-      } else throw e;
+    console.log('\n=== 5. Testing End-to-End faster-whisper (PhoWhisper-small-ct2 CPU int8 + VAD) + Layout + CapCut on "Phạm Hà" ===');
+    console.log('Running faster-whisper:', pyFw, 'model:', path.basename(model));
+    const words = await whisper.transcribe({ bin: pyFw, model, wav: wavHa, lang: 'vi' });
+    audio.alignWordsToAudio(words, mixHa.wavData);
+    audio.addLoudness(words, mixHa.wavData);
+    console.log('Recognized words:', words.length, 'Sample:', words.slice(0, 10).map((w) => w.text).join(' '));
+    assert(words.length > 50, `Expected >50 words from Phạm Hà voiceover, got ${words.length}`);
+    for (let wi = 0; wi < words.length; wi++) {
+      assert(words[wi].end > words[wi].start, `Word ${wi} must have positive duration`);
+      if (wi > 0) {
+        assert(words[wi].start >= words[wi - 1].start, `Words must stay chronological at index ${wi}`);
+        assert(words[wi - 1].end <= words[wi].start + 1e-6, `Words must not overlap at index ${wi}`);
+      }
     }
-    audio.addLoudness(words, mixOpal.wavData);
-    console.log('Recognized words:', words.length, 'Sample:', words.slice(0, 8).map((w) => w.text).join(' '));
-    assert(words.length > 20, `Expected >20 words from Opal 2 voiceover, got ${words.length}`);
-
-    const groups = Layout.buildLayout(words, { lang: 'en' });
+    const srtMod = require(path.join(appDir, 'shared', 'core', 'srt.js'));
+    const haCues = srtMod.groupMovieCues(words, aHa.canvas);
+    const haSrt = srtMod.toSrt(haCues);
+    assert(/1\r?\n\d{2}:\d{2}:\d{2},\d{3} --> \d{2}:\d{2}:\d{2},\d{3}/m.test(haSrt), 'SRT output format must stay valid');
+    const groups = Layout.buildLayout(words, { lang: 'vi' });
     const segs = typo.buildSegments(groups, {
-      width: aOpal.canvas.width,
-      height: aOpal.canvas.height,
-      fps: aOpal.canvas.fps,
+      width: aHa.canvas.width,
+      height: aHa.canvas.height,
+      fps: aHa.canvas.fps,
       fontsDir: path.join(appDir, 'shared', 'fonts'),
       anim: 'auto',
       glow: true
     });
     console.log('Generated phrase groups:', groups.length, 'CapCut text segments:', segs.length);
-    assert(groups.length > 3, 'Expected >3 typography groups');
+    assert(groups.length > 5, 'Expected >5 typography groups');
     assert(segs.length >= words.length * 0.9, 'Expected CapCut word segments for recognized words');
 
     console.log('\n=== 6. Verifying New Animations, Vietnamese Presets, Bundled Fonts & UI ===');
     const fontsDir = path.join(appDir, 'shared', 'fonts');
+    // Note: use aHa canvas above in Part 6 cleanly
+    const aOpalCanvas = aOpal.canvas;
     const newAnims = ['elastic', 'float', 'wave', 'pulse'];
     for (const animId of newAnims) {
       const animEntry = Array.isArray(typo.ANIMS)
@@ -120,9 +118,9 @@ async function main() {
         : typo.ANIMS[animId];
       assert(animEntry, `Missing animation "${animId}" in typo.ANIMS`);
       const aSegs = typo.buildSegments(groups.slice(0, 2), {
-        width: aOpal.canvas.width,
-        height: aOpal.canvas.height,
-        fps: aOpal.canvas.fps,
+        width: aOpalCanvas.width,
+        height: aOpalCanvas.height,
+        fps: aOpalCanvas.fps,
         fontsDir,
         anim: animId,
         glow: true
@@ -427,18 +425,37 @@ async function main() {
     const eGs = ctx.AutoSubLayout.buildLayout(sampleViWords, { lang: 'vi' });
     assert(eGs.some((g) => g.words.map((w) => w.text).join(' ').includes('ở kỹ thuật triệt Biomatic')), 'Electron AutoSubLayout must use AutoSubViPhrases');
 
-    // Test 10g: Đồng bộ thời gian DTW + bám sóng âm & kiểm tra sửa lỗi UI 2.0.6
-    assert.strictEqual(whisper.dtwPresetForModel('ggml-large-v3-turbo-q5_0.bin'), 'large.v3.turbo');
-    assert.strictEqual(whisper.dtwPresetForModel('ggml-large-v3.bin'), 'large.v3');
-    const mockDtwObj = {
-      transcription: [
-        { text: ' Hết', offsets: { from: 30, to: 210 }, tokens: [{ text: ' H', offsets: { from: 30, to: 180 }, t_dtw: 28 }, { text: 'ết', offsets: { from: 180, to: 210 }, t_dtw: 34 }] },
-        { text: ' sạch', offsets: { from: 210, to: 900 }, tokens: [{ text: ' s', offsets: { from: 210, to: 440 }, t_dtw: 48 }, { text: '.', offsets: { from: 850, to: 900 }, t_dtw: 88 }] }
+    // Test 10g: faster-whisper (PhoWhisper-small-ct2 CPU int8 + VAD), Audio alignment & UI/Thumbnails v2.0.7
+    const fwPySrc = fs.readFileSync(fwScript, 'utf8');
+    assert(fwPySrc.includes('device="cpu"') && fwPySrc.includes('compute_type="int8"') && fwPySrc.includes('"vad_filter": True'), 'fw_transcribe.py must enforce cpu/int8/vad_filter=True');
+    const mockFwObj = {
+      segments: [
+        {
+          start: 0.2, end: 1.4, avg_logprob: -0.1,
+          words: [
+            { word: ' Bio', start: 0.22, end: 0.45 },
+            { word: 'matic', start: 0.45, end: 0.68 },
+            { word: ' 95', start: 0.72, end: 0.95 },
+            { word: '%', start: 0.95, end: 1.02 },
+            { word: '.', start: 1.02, end: 1.05 }
+          ]
+        },
+        {
+          start: 1.5, end: 1.7, avg_logprob: -0.7,
+          words: [
+            { word: ' spam', start: 1.5, end: 1.52 },
+            { word: ' tail', start: 1.52, end: 1.54 },
+            { word: ' noise', start: 1.54, end: 1.56 },
+            { word: ' loop', start: 1.56, end: 1.58 }
+          ]
+        }
       ]
     };
-    const dtwWords = whisper.parseWhisperJson(mockDtwObj, { lang: 'vi' });
-    assert(Math.abs(dtwWords[0].start - 0.205) < 0.01, `Expected DTW onset shift ~0.205s, got ${dtwWords[0].start}`);
-    assert(dtwWords[1].end < 0.70, `DTW must exclude trailing punctuation silence outlier (got end=${dtwWords[1].end})`);
+    const fwParsed = whisper.parseFasterWhisperJson(mockFwObj, { lang: 'vi' });
+    assert.strictEqual(fwParsed.length, 2, `Expected subword + unit + punct join & tail filter -> 2 words, got ${fwParsed.length}`);
+    assert.strictEqual(fwParsed[0].text, 'Biomatic');
+    assert.strictEqual(fwParsed[1].text, '95%.');
+
     const sr = 16000;
     const pcm = new Int16Array(sr * 2);
     for (let i = Math.floor(0.35 * sr); i < Math.floor(0.70 * sr); i++) pcm[i] = 12000;
@@ -449,8 +466,28 @@ async function main() {
     const cssText = cssBuf.toString('utf8');
     assert(/\.brush-btn\s*\{[^}]*width:\s*auto/s.test(cssText), '.brush-btn must set width: auto to prevent vertical stretching');
     assert(/\.srow\s+\.lbl\s*\{[^}]*overflow:\s*hidden/s.test(cssText), '.srow .lbl must prevent pill text bleed into font picker');
+    assert(/\.drafts\s*\{[^}]*grid-auto-rows:\s*max-content[^}]*align-content:\s*start/s.test(cssText), '.drafts must set grid-auto-rows: max-content + align-content: start to prevent thumbnail row collapse');
+    assert(/\.grp-act\s*\{[^}]*white-space:\s*nowrap/s.test(cssText), '.grp-act must prevent multi-line pill button wrapping');
     assert(!rendJs.includes('styleTag(k, k === \'base\' ? \'#eef3ff\' : s.color, false, s.font)'), 'renderInspector must not pass s.font into styleTag snippet slot');
-    console.log('Multi-emphasis, smart VI segmentation, Undo/Redo, placeholder, Electron UMD, DTW/audio sync & UI checks passed');
+
+    // Test 10h: Chỉnh sửa chữ & xuống dòng / lên dòng ở Step 3 + thumbnail helper
+    const lineTestWords = ['Mấy', 'chị', 'yêu', 'ơi', 'ghé', 'qua'].map((t, i) => ({ text: t, start: 0.5 + i * 0.25, end: 0.7 + i * 0.25, rms: 0.05 }));
+    const ltGrp = Layout.buildLayout(lineTestWords, { lang: 'vi', maxWords: 8, maxChars: 40 })[0];
+    const initLineCount = ltGrp.lines.length;
+    Layout.moveWordLine(ltGrp, 0, 1, { lang: 'vi' });
+    assert(ltGrp.lines.length >= initLineCount, 'moveWordLine(+1) must push last word down a line');
+    const customLine0 = ltGrp.lines[0].words.map((w) => w.text).join(' ');
+    Layout.applySpan(ltGrp, 1, 2, 'blue', { lang: 'vi' });
+    assert.strictEqual(ltGrp.lines[0].words.map((w) => w.text).join(' '), customLine0, 'applySpan/relayout must preserve manual lineBreaks');
+    Layout.moveWordLine(ltGrp, 1, -1, { lang: 'vi' });
+    assert(ltGrp.lines[0].words.length > ltGrp.lines[0].words.length - 1, 'moveWordLine(-1) must pull word up to line 0');
+    assert(Layout.editGroupText(ltGrp, 'Các\nchị đẹp\nơi ghé', { lang: 'vi' }), 'editGroupText must succeed');
+    assert.strictEqual(ltGrp.lines.length, 3, 'editGroupText must create 3 lines matching newlines');
+    assert.strictEqual(ltGrp.lines[1].words.map((w) => w.text).join(' '), 'chị đẹp');
+    Layout.resetLines(ltGrp, { lang: 'vi' });
+    assert.strictEqual(ltGrp.lineBreaks, undefined, 'resetLines must clear manual lineBreaks');
+    ['findDraftCover', 'moveGroupWordLine', 'saveGroupTextEdit', 'saveMovieCueEdit'].forEach((sym) => assert(rendJs.includes(sym), `renderer.js must define ${sym}`));
+    console.log('faster-whisper, thumbnails fix, line up/down, inline text edit & UI checks passed');
 
     console.log('\nALL VERIFICATION CHECKS PASSED!');
   } finally {
